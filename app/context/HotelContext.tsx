@@ -76,6 +76,7 @@ interface HotelContextValue {
   setSelectedHotel: (h: string) => void;
   setSelectedPeriod: (p: string) => void;
   addHotel: (hotel: SavedHotel) => void;
+  deleteHotel: (name: string) => void;
   currentEntry: EntryData;
   saveEntry: (data: EntryData) => void;
   hasEntry: boolean;
@@ -120,6 +121,19 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
       return updated;
     });
     setSelectedHotel(hotel.name);
+  }, []);
+
+  const deleteHotel = useCallback((name: string) => {
+    setHotels(prev => {
+      const updated = prev.filter(h => h.name !== name);
+      try {
+        localStorage.setItem(HOTELS_KEY, JSON.stringify(updated));
+      } catch {
+        // ignore storage errors
+      }
+      return updated;
+    });
+    setSelectedHotel(prevSelected => (prevSelected === name ? "" : prevSelected));
   }, []);
 
   const currentEntry = useMemo<EntryData>(() => {
@@ -181,6 +195,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     setSelectedHotel,
     setSelectedPeriod,
     addHotel,
+    deleteHotel,
     currentEntry,
     saveEntry,
     hasEntry,

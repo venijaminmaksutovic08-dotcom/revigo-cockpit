@@ -12,7 +12,9 @@ import {
   FileText,
   ChevronRight,
   Hotel,
+  Trash2,
 } from "lucide-react";
+import { useHotel } from "../context/HotelContext";
 
 const navItems = [
   { label: "Dashboard",        icon: LayoutDashboard, href: "/"          },
@@ -26,6 +28,7 @@ const navItems = [
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { hotels, selectedHotel, setSelectedHotel, deleteHotel } = useHotel();
 
   return (
     <aside
@@ -72,7 +75,7 @@ export default function Sidebar() {
       </div>
 
       {/* Nav items */}
-      <nav className="flex flex-col gap-0.5 px-3 flex-1">
+      <nav className="flex flex-col gap-0.5 px-3">
         {navItems.map(({ label, icon: Icon, href }) => {
           const isActive = pathname === href;
           return (
@@ -115,6 +118,70 @@ export default function Sidebar() {
           );
         })}
       </nav>
+
+      {/* Naši hoteli */}
+      <div className="flex flex-col flex-1 min-h-0 px-3 pt-6">
+        <div
+          className="px-2 pb-2"
+          style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", letterSpacing: "0.1em", textTransform: "uppercase" }}
+        >
+          Naši hoteli
+        </div>
+        <div className="flex flex-col gap-0.5 overflow-y-auto">
+          {hotels.length === 0 ? (
+            <div className="px-2 py-1" style={{ fontSize: 12, color: "#9ca3af" }}>
+              Nema dodanih hotela
+            </div>
+          ) : (
+            hotels.map(h => {
+              const isSelected = h.name === selectedHotel;
+              return (
+                <div
+                  key={h.name}
+                  onClick={() => setSelectedHotel(h.name)}
+                  className="flex items-center gap-2 w-full rounded-lg"
+                  style={{
+                    height: 44,
+                    paddingLeft: 12,
+                    paddingRight: 8,
+                    cursor: "pointer",
+                    background: isSelected ? "rgba(201,168,76,0.08)" : "transparent",
+                    border: isSelected ? "1px solid rgba(201,168,76,0.2)" : "1px solid transparent",
+                  }}
+                  onMouseEnter={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "#f9fafb"; }}
+                  onMouseLeave={e => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: isSelected ? 600 : 500,
+                        color: isSelected ? "#111827" : "#374151",
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {h.name}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 1 }}>{h.city}</div>
+                  </div>
+                  <button
+                    onClick={e => { e.stopPropagation(); deleteHotel(h.name); }}
+                    className="flex items-center justify-center rounded-md"
+                    style={{ width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0 }}
+                    onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.1)"; }}
+                    onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                    title="Obriši hotel"
+                  >
+                    <Trash2 size={13} color="#dc2626" />
+                  </button>
+                </div>
+              );
+            })
+          )}
+        </div>
+      </div>
 
       {/* Footer */}
       <div className="px-5 py-4" style={{ borderTop: "1px solid #e5e7eb" }}>

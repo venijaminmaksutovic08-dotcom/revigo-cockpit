@@ -1,16 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Bell, RefreshCw, Plus } from "lucide-react";
+import { ChevronDown, Bell, RefreshCw, Plus, Trash2 } from "lucide-react";
 
 interface HotelDropdownProps {
   value: string;
   hotels: string[];
   onChange: (v: string) => void;
   onAddHotel: () => void;
+  onDeleteHotel: (name: string) => void;
 }
 
-function HotelDropdown({ value, hotels, onChange, onAddHotel }: HotelDropdownProps) {
+function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: HotelDropdownProps) {
   const [open, setOpen] = useState(false);
 
   function select(name: string) {
@@ -21,6 +22,11 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel }: HotelDropdownPro
   function openModal() {
     setOpen(false);
     onAddHotel();
+  }
+
+  function handleDelete(e: React.MouseEvent, name: string) {
+    e.stopPropagation();
+    onDeleteHotel(name);
   }
 
   return (
@@ -57,12 +63,12 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel }: HotelDropdownPro
             </div>
           ) : (
             hotels.map(name => (
-              <button
+              <div
                 key={name}
                 onClick={() => select(name)}
+                className="flex items-center w-full"
                 style={{
-                  display: "flex", alignItems: "center", width: "100%",
-                  height: 36, paddingLeft: 12, paddingRight: 12,
+                  height: 36, paddingLeft: 12, paddingRight: 8,
                   fontSize: 13, fontWeight: name === value ? 600 : 400,
                   color: name === value ? "#C9A84C" : "#374151",
                   background: name === value ? "rgba(201,168,76,0.06)" : "transparent",
@@ -72,8 +78,18 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel }: HotelDropdownPro
                 onMouseEnter={e => { if (name !== value) (e.currentTarget as HTMLElement).style.background = "#f9fafb"; }}
                 onMouseLeave={e => { if (name !== value) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
-                {name}
-              </button>
+                <span style={{ flex: 1, textAlign: "left" }}>{name}</span>
+                <button
+                  onClick={e => handleDelete(e, name)}
+                  className="flex items-center justify-center rounded-md"
+                  style={{ width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0 }}
+                  onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.1)"; }}
+                  onMouseLeave={e => { (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                  title="Obriši hotel"
+                >
+                  <Trash2 size={13} color="#dc2626" />
+                </button>
+              </div>
             ))
           )}
 
@@ -174,16 +190,17 @@ interface TopBarProps {
   hotels: string[];
   periods: string[];
   onAddHotel: () => void;
+  onDeleteHotel: (name: string) => void;
 }
 
-export default function TopBar({ hotel, period, onHotelChange, onPeriodChange, hotels, periods, onAddHotel }: TopBarProps) {
+export default function TopBar({ hotel, period, onHotelChange, onPeriodChange, hotels, periods, onAddHotel, onDeleteHotel }: TopBarProps) {
   return (
     <header
       className="flex items-end justify-between px-6"
       style={{ height: 64, background: "#ffffff", borderBottom: "1px solid #e5e7eb", paddingBottom: 12, flexShrink: 0 }}
     >
       <div className="flex items-end gap-4">
-        <HotelDropdown value={hotel} hotels={hotels} onChange={onHotelChange} onAddHotel={onAddHotel} />
+        <HotelDropdown value={hotel} hotels={hotels} onChange={onHotelChange} onAddHotel={onAddHotel} onDeleteHotel={onDeleteHotel} />
         <PeriodDropdown value={period} periods={periods} onChange={onPeriodChange} />
       </div>
 
