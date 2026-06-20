@@ -52,15 +52,15 @@ export default function DashboardPage() {
         )}
       </div>
 
-      <div className="flex gap-3 mb-5">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
         {kpiData.map(kpi => {
           const rowKey = ROW_DEFS.find(r => r.label === kpi.label)?.key ?? "";
           return <KPICard key={kpi.label} data={kpi} icon={KPI_ICON_BY_ROW[rowKey]} />;
         })}
       </div>
 
-      <div className="flex gap-4 items-start">
-        <div className="flex-1 min-w-0">
+      <div className="flex flex-col md:flex-row gap-4 items-start">
+        <div className="flex-1 min-w-0 w-full">
           <PriceTable data={dailyData} />
         </div>
         <RightPanel actions={priorityActions} revenueGap={revenueGapData} />

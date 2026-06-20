@@ -15,6 +15,7 @@ const PERIODS = [
 function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const { hotels, selectedHotel, selectedPeriod, setSelectedHotel, setSelectedPeriod, addHotel, deleteHotel } = useHotel();
   const [showModal, setShowModal] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   function handleAddHotel(hotel: SavedHotel) {
     addHotel(hotel);
@@ -23,7 +24,14 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="flex h-full" style={{ background: "#f9fafb", overflow: "hidden" }}>
-      <Sidebar />
+      {mobileMenuOpen && (
+        <div
+          className="fixed inset-0 z-30 md:hidden"
+          style={{ background: "rgba(17,24,39,0.4)" }}
+          onClick={() => setMobileMenuOpen(false)}
+        />
+      )}
+      <Sidebar mobileOpen={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <TopBar
           hotel={selectedHotel}
@@ -34,8 +42,9 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           periods={PERIODS}
           onAddHotel={() => setShowModal(true)}
           onDeleteHotel={deleteHotel}
+          onMenuClick={() => setMobileMenuOpen(o => !o)}
         />
-        <main className="flex-1 overflow-y-auto" style={{ padding: "24px", background: "#f9fafb" }}>
+        <main className="flex-1 overflow-y-auto p-4 md:p-6" style={{ background: "#f9fafb" }}>
           {children}
         </main>
       </div>

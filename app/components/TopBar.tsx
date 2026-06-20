@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { ChevronDown, Bell, RefreshCw, Plus, Trash2 } from "lucide-react";
+import { ChevronDown, Bell, RefreshCw, Plus, Trash2, Menu } from "lucide-react";
 
 interface HotelDropdownProps {
   value: string;
@@ -30,12 +30,13 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: H
   }
 
   return (
-    <div className="relative">
+    <div className="relative w-full md:w-auto">
       <div style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 2 }}>
         Hotel
       </div>
       <button
         onClick={() => setOpen(o => !o)}
+        className="w-full md:w-auto"
         style={{
           display: "flex", alignItems: "center", gap: 8,
           height: 34, paddingLeft: 12, paddingRight: 10,
@@ -130,12 +131,13 @@ function PeriodDropdown({ value, periods, onChange }: PeriodDropdownProps) {
   const [open, setOpen] = useState(false);
 
   return (
-    <div className="relative">
+    <div className="relative w-full md:w-auto">
       <div style={{ fontSize: 10, color: "#9ca3af", fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 2 }}>
         Period
       </div>
       <button
         onClick={() => setOpen(o => !o)}
+        className="w-full md:w-auto"
         style={{
           display: "flex", alignItems: "center", gap: 8,
           height: 34, paddingLeft: 12, paddingRight: 10,
@@ -191,20 +193,30 @@ interface TopBarProps {
   periods: string[];
   onAddHotel: () => void;
   onDeleteHotel: (name: string) => void;
+  onMenuClick: () => void;
 }
 
-export default function TopBar({ hotel, period, onHotelChange, onPeriodChange, hotels, periods, onAddHotel, onDeleteHotel }: TopBarProps) {
+export default function TopBar({ hotel, period, onHotelChange, onPeriodChange, hotels, periods, onAddHotel, onDeleteHotel, onMenuClick }: TopBarProps) {
   return (
     <header
-      className="flex items-end justify-between px-6"
-      style={{ height: 64, background: "#ffffff", borderBottom: "1px solid #e5e7eb", paddingBottom: 12, flexShrink: 0 }}
+      className="flex flex-col md:flex-row md:items-end md:justify-between gap-3 px-4 md:px-6 py-3 md:py-0 md:h-16 md:pb-3"
+      style={{ background: "#ffffff", borderBottom: "1px solid #e5e7eb", flexShrink: 0 }}
     >
-      <div className="flex items-end gap-4">
-        <HotelDropdown value={hotel} hotels={hotels} onChange={onHotelChange} onAddHotel={onAddHotel} onDeleteHotel={onDeleteHotel} />
-        <PeriodDropdown value={period} periods={periods} onChange={onPeriodChange} />
+      <div className="flex items-center gap-3 w-full md:w-auto">
+        <button
+          onClick={onMenuClick}
+          className="md:hidden flex items-center justify-center rounded-lg"
+          style={{ width: 34, height: 34, background: "#f9fafb", border: "1px solid #e5e7eb", cursor: "pointer", flexShrink: 0 }}
+        >
+          <Menu size={16} color="#374151" />
+        </button>
+        <div className="flex flex-col md:flex-row md:items-end gap-3 md:gap-4 flex-1 md:flex-none">
+          <HotelDropdown value={hotel} hotels={hotels} onChange={onHotelChange} onAddHotel={onAddHotel} onDeleteHotel={onDeleteHotel} />
+          <PeriodDropdown value={period} periods={periods} onChange={onPeriodChange} />
+        </div>
       </div>
 
-      <div className="flex items-end gap-2 pb-0.5">
+      <div className="flex items-center justify-end gap-2 w-full md:w-auto">
         <button
           style={{ display: "flex", alignItems: "center", gap: 6, height: 34, paddingLeft: 12, paddingRight: 12, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, color: "#6b7280", fontSize: 12, fontWeight: 500, cursor: "pointer" }}
         >
@@ -212,7 +224,7 @@ export default function TopBar({ hotel, period, onHotelChange, onPeriodChange, h
           Osveži
         </button>
         <button
-          style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, cursor: "pointer" }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, cursor: "pointer", flexShrink: 0 }}
         >
           <Bell size={15} color="#6b7280" />
         </button>

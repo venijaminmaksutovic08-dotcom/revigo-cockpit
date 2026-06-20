@@ -98,8 +98,8 @@ export default function HotelModal({ onSave, onClose }: HotelModalProps) {
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="rounded-2xl w-full"
-        style={{ maxWidth: 440, background: "#ffffff", border: "1px solid #e5e7eb", boxShadow: "0 24px 64px rgba(0,0,0,0.12)" }}
+        className="w-screen h-screen md:w-full md:h-auto md:max-w-[440px] rounded-none md:rounded-2xl flex flex-col"
+        style={{ background: "#ffffff", border: "1px solid #e5e7eb", boxShadow: "0 24px 64px rgba(0,0,0,0.12)" }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 pt-5 pb-4" style={{ borderBottom: "1px solid #f3f4f6" }}>
@@ -125,14 +125,14 @@ export default function HotelModal({ onSave, onClose }: HotelModalProps) {
         </div>
 
         {/* Form */}
-        <div className="px-6 py-5 flex flex-col gap-4">
+        <div className="px-6 py-5 flex flex-col gap-4 flex-1 md:flex-none overflow-y-auto">
           <Field label="Naziv hotela" value={form.name} onChange={set("name")} placeholder="npr. Hotel Panorama Zlatibor" error={errors.name} />
           <Field label="Broj soba" value={form.rooms} onChange={set("rooms")} placeholder="npr. 30" type="number" error={errors.rooms} />
           <Field label="Grad" value={form.city} onChange={set("city")} placeholder="npr. Zlatibor" error={errors.city} />
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-3 px-6 pb-5">
+        <div className="flex items-center justify-end gap-3 px-6 pb-5" style={{ flexShrink: 0 }}>
           <button
             onClick={onClose}
             style={{ height: 38, paddingLeft: 16, paddingRight: 16, borderRadius: 8, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#374151", fontSize: 13, fontWeight: 500, cursor: "pointer" }}

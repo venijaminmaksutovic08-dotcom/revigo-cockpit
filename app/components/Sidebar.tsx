@@ -26,13 +26,20 @@ const navItems = [
   { label: "Izveštaji",        icon: FileText,        href: "/izvestaji" },
 ];
 
-export default function Sidebar() {
+interface SidebarProps {
+  mobileOpen: boolean;
+  onClose: () => void;
+}
+
+export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { hotels, selectedHotel, setSelectedHotel, deleteHotel } = useHotel();
 
   return (
     <aside
-      className="flex flex-col h-full"
+      className={`fixed md:static inset-y-0 left-0 z-40 flex flex-col h-full transition-transform duration-200 ease-in-out md:translate-x-0 ${
+        mobileOpen ? "translate-x-0" : "-translate-x-full"
+      }`}
       style={{
         width: 240,
         minWidth: 240,
@@ -82,6 +89,7 @@ export default function Sidebar() {
             <Link
               key={href}
               href={href}
+              onClick={onClose}
               className="flex items-center gap-3 w-full rounded-lg transition-all duration-150 no-underline"
               style={{
                 height: 40,
@@ -138,7 +146,7 @@ export default function Sidebar() {
               return (
                 <div
                   key={h.name}
-                  onClick={() => setSelectedHotel(h.name)}
+                  onClick={() => { setSelectedHotel(h.name); onClose(); }}
                   className="flex items-center gap-2 w-full rounded-lg"
                   style={{
                     height: 44,

@@ -35,7 +35,7 @@ export default function RightPanel({ actions, revenueGap }: RightPanelProps) {
   const isNegative = revenueGap.total < 0;
 
   return (
-    <div className="flex flex-col gap-4" style={{ width: 320, flexShrink: 0 }}>
+    <div className="flex flex-col gap-4 w-full md:w-[320px]" style={{ flexShrink: 0 }}>
 
       {/* Revenue Gap Card */}
       <div className="rounded-xl overflow-hidden" style={{ background: "#ffffff", border: "1px solid #e5e7eb", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}>

@@ -87,15 +87,11 @@ export default function DataEntryModal({ hotel, period, initialData, onSave, onC
       onClick={e => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div
-        className="rounded-2xl"
+        className="w-screen h-screen md:w-[96vw] md:max-w-[1180px] md:h-auto md:max-h-[90vh] rounded-none md:rounded-2xl flex flex-col"
         style={{
-          width: "min(96vw, 1180px)",
-          maxHeight: "90vh",
           background: "#ffffff",
           border: "1px solid #e5e7eb",
           boxShadow: "0 24px 64px rgba(0,0,0,0.12)",
-          display: "flex",
-          flexDirection: "column",
         }}
       >
         {/* Header */}
