@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import HotelModal from "./HotelModal";
+import { HotelProvider, useHotel, type SavedHotel } from "../context/HotelContext";
 
 const PERIODS = [
   "Januar 2026", "Februar 2026", "Mart 2026",    "April 2026",
@@ -11,44 +12,13 @@ const PERIODS = [
   "Septembar 2026", "Oktobar 2026", "Novembar 2026", "Decembar 2026",
 ];
 
-interface SavedHotel {
-  name: string;
-  rooms: number;
-  city: string;
-}
-
-const STORAGE_KEY = "revigo_hotels";
-
-export default function DashboardShell({ children }: { children: React.ReactNode }) {
-  const [hotels, setHotels] = useState<SavedHotel[]>([]);
-  const [selectedHotel, setSelectedHotel] = useState("");
-  const [selectedPeriod, setSelectedPeriod] = useState("");
+function DashboardShellInner({ children }: { children: React.ReactNode }) {
+  const { hotels, selectedHotel, selectedPeriod, setSelectedHotel, setSelectedPeriod, addHotel } = useHotel();
   const [showModal, setShowModal] = useState(false);
 
-  // Load hotels from localStorage on mount
-  useEffect(() => {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY);
-      if (stored) {
-        const parsed: SavedHotel[] = JSON.parse(stored);
-        setHotels(parsed);
-        if (parsed.length > 0) setSelectedHotel(parsed[0].name);
-      }
-    } catch {
-      // ignore parse errors
-    }
-  }, []);
-
   function handleAddHotel(hotel: SavedHotel) {
-    const updated = [...hotels, hotel];
-    setHotels(updated);
-    setSelectedHotel(hotel.name);
+    addHotel(hotel);
     setShowModal(false);
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-    } catch {
-      // ignore storage errors
-    }
   }
 
   return (
@@ -76,5 +46,13 @@ export default function DashboardShell({ children }: { children: React.ReactNode
         />
       )}
     </div>
+  );
+}
+
+export default function DashboardShell({ children }: { children: React.ReactNode }) {
+  return (
+    <HotelProvider>
+      <DashboardShellInner>{children}</DashboardShellInner>
+    </HotelProvider>
   );
 }
