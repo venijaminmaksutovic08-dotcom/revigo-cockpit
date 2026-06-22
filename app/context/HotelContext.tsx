@@ -218,7 +218,8 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
       if (!active) return;
       if (!error && data) {
         setHotels(data);
-        if (data.length > 0) setSelectedHotel(data[0].name);
+      } else if (error) {
+        console.error("Failed to load hotels from Supabase:", error.message);
       }
       setLoadingHotels(false);
     })();
@@ -249,6 +250,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
         }
         setMonthEntries(byDate);
       } else {
+        if (error) console.error("Failed to load daily reports from Supabase:", error.message);
         setMonthEntries({});
       }
       setLoadingMonth(false);
@@ -265,6 +267,8 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     if (!error && data) {
       setHotels(prev => [...prev, data]);
       setSelectedHotel(data.name);
+    } else if (error) {
+      console.error("Failed to add hotel in Supabase:", error.message);
     }
   }, []);
 
@@ -275,6 +279,8 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     if (!error) {
       setHotels(prev => prev.filter(h => h.id !== hotel.id));
       setSelectedHotel(prevSelected => (prevSelected === name ? "" : prevSelected));
+    } else {
+      console.error("Failed to delete hotel in Supabase:", error.message);
     }
   }, [hotels]);
 
@@ -301,6 +307,8 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
 
       if (!error && saved) {
         setMonthEntries(prev => ({ ...prev, [dateISO]: dbRowToEntryData(saved) }));
+      } else if (error) {
+        console.error("Failed to save daily report in Supabase:", error.message);
       }
     },
     [selectedHotelObj]
