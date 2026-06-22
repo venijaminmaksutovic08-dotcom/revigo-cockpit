@@ -12,9 +12,9 @@ import {
 
 interface DataEntryModalProps {
   hotel: string;
-  period: string;
+  dateLabel: string;
   initialData: EntryData;
-  onSave: (data: EntryData) => void;
+  onSave: (data: EntryData) => Promise<void>;
   onClose: () => void;
 }
 
@@ -66,8 +66,9 @@ function computeDerived(values: EntryData[RowKey]) {
   return { pickup, gap, ostvarenost };
 }
 
-export default function DataEntryModal({ hotel, period, initialData, onSave, onClose }: DataEntryModalProps) {
+export default function DataEntryModal({ hotel, dateLabel, initialData, onSave, onClose }: DataEntryModalProps) {
   const [data, setData] = useState<EntryData>(() => cloneEntry(initialData));
+  const [saving, setSaving] = useState(false);
 
   function setCell(rowKey: RowKey, columnKey: ColumnKey, value: number) {
     setData(prev => ({
@@ -76,8 +77,10 @@ export default function DataEntryModal({ hotel, period, initialData, onSave, onC
     }));
   }
 
-  function handleSave() {
-    onSave(data);
+  async function handleSave() {
+    setSaving(true);
+    await onSave(data);
+    setSaving(false);
   }
 
   return (
@@ -105,7 +108,7 @@ export default function DataEntryModal({ hotel, period, initialData, onSave, onC
             </div>
             <div>
               <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>Unos dnevnih podataka</div>
-              <div style={{ fontSize: 12, color: "#9ca3af" }}>{hotel} &middot; {period}</div>
+              <div style={{ fontSize: 12, color: "#9ca3af" }}>{hotel} &middot; {dateLabel}</div>
             </div>
           </div>
           <button
@@ -191,15 +194,17 @@ export default function DataEntryModal({ hotel, period, initialData, onSave, onC
         <div className="flex items-center justify-end gap-3 px-6 pb-5 pt-1" style={{ flexShrink: 0, borderTop: "1px solid #f3f4f6" }}>
           <button
             onClick={onClose}
-            style={{ height: 38, paddingLeft: 16, paddingRight: 16, borderRadius: 8, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#374151", fontSize: 13, fontWeight: 500, cursor: "pointer" }}
+            disabled={saving}
+            style={{ height: 38, paddingLeft: 16, paddingRight: 16, borderRadius: 8, border: "1px solid #e5e7eb", background: "#f9fafb", color: "#374151", fontSize: 13, fontWeight: 500, cursor: saving ? "default" : "pointer" }}
           >
             Otkaži
           </button>
           <button
             onClick={handleSave}
-            style={{ height: 38, paddingLeft: 20, paddingRight: 20, borderRadius: 8, border: "none", background: "linear-gradient(135deg, #C9A84C 0%, #E8C96B 100%)", color: "#ffffff", fontSize: 13, fontWeight: 600, cursor: "pointer", boxShadow: "0 2px 8px rgba(201,168,76,0.3)" }}
+            disabled={saving}
+            style={{ height: 38, paddingLeft: 20, paddingRight: 20, borderRadius: 8, border: "none", background: "linear-gradient(135deg, #C9A84C 0%, #E8C96B 100%)", color: "#ffffff", fontSize: 13, fontWeight: 600, cursor: saving ? "default" : "pointer", boxShadow: "0 2px 8px rgba(201,168,76,0.3)", opacity: saving ? 0.7 : 1 }}
           >
-            Sačuvaj podatke
+            {saving ? "Čuvanje..." : "Sačuvaj podatke"}
           </button>
         </div>
       </div>

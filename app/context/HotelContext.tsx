@@ -19,6 +19,7 @@ export interface NewHotelInput {
 
 export type RowKey = "brojNocenja" | "ukupanPrihod" | "adr" | "popunjenost" | "revpar";
 export type ColumnKey = "prosleGodine" | "istiDanProsleGodine" | "naKnjigamaJuce" | "naKnjigamaDanas" | "target";
+export type DayStatus = "none" | "green" | "yellow" | "red";
 
 export interface RowDef {
   key: RowKey;
@@ -57,17 +58,37 @@ const DB_COLUMN_BY_KEY: Record<ColumnKey, keyof Pick<DailyReportRow, "last_year"
   target: "target",
 };
 
-const MONTHS_SR = [
+export const MONTHS_SR = [
   "Januar", "Februar", "Mart", "April", "Maj", "Jun",
   "Jul", "Avgust", "Septembar", "Oktobar", "Novembar", "Decembar",
 ];
 
-function periodToDate(period: string): string | null {
+export interface MonthInfo {
+  year: number;
+  month: number; // 1-indexed
+  daysInMonth: number;
+  startDate: string;
+  endDate: string;
+}
+
+export function periodToMonthInfo(period: string): MonthInfo | null {
   const [monthName, yearStr] = period.split(" ");
   const monthIndex = MONTHS_SR.indexOf(monthName);
   const year = Number(yearStr);
   if (monthIndex === -1 || !year) return null;
-  return `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
+  const month = monthIndex + 1;
+  const daysInMonth = new Date(year, month, 0).getDate();
+  return {
+    year,
+    month,
+    daysInMonth,
+    startDate: `${year}-${String(month).padStart(2, "0")}-01`,
+    endDate: `${year}-${String(month).padStart(2, "0")}-${String(daysInMonth).padStart(2, "0")}`,
+  };
+}
+
+export function dateToISO(year: number, month: number, day: number): string {
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
 export type RowValues = Record<ColumnKey, number>;
@@ -116,6 +137,40 @@ function formatNumber(n: number, rowDef: RowDef): string {
   return `${rowDef.prefix ?? ""}${rounded.toLocaleString("sr-RS")}${rowDef.unit ?? ""}`;
 }
 
+// Revenue achievement vs. target on a given day's entry, used for calendar cell coloring.
+export function getDayStatus(entry: EntryData | undefined | null): DayStatus {
+  if (!entry) return "none";
+  const { naKnjigamaDanas, target } = entry.ukupanPrihod;
+  if (target === 0) return naKnjigamaDanas > 0 ? "green" : "none";
+  if (naKnjigamaDanas >= target) return "green";
+  if (naKnjigamaDanas >= target * 0.9) return "yellow";
+  return "red";
+}
+
+// Sums the two additive metrics across a set of daily entries and re-derives ADR/Popunjenost/RevPAR from the totals.
+function aggregateEntries(entries: EntryData[], rooms: number): { data: EntryData; hasAny: boolean } {
+  const data = emptyEntryData();
+  if (entries.length === 0) return { data, hasAny: false };
+
+  const roomNights = rooms * entries.length;
+
+  for (const col of COLUMN_DEFS) {
+    let brojNocenjaSum = 0;
+    let ukupanPrihodSum = 0;
+    for (const entry of entries) {
+      brojNocenjaSum += entry.brojNocenja[col.key];
+      ukupanPrihodSum += entry.ukupanPrihod[col.key];
+    }
+    data.brojNocenja[col.key] = brojNocenjaSum;
+    data.ukupanPrihod[col.key] = ukupanPrihodSum;
+    data.adr[col.key] = brojNocenjaSum > 0 ? ukupanPrihodSum / brojNocenjaSum : 0;
+    data.popunjenost[col.key] = roomNights > 0 ? (brojNocenjaSum / roomNights) * 100 : 0;
+    data.revpar[col.key] = roomNights > 0 ? ukupanPrihodSum / roomNights : 0;
+  }
+
+  return { data, hasAny: true };
+}
+
 interface HotelContextValue {
   hotels: SavedHotel[];
   selectedHotel: string;
@@ -124,12 +179,13 @@ interface HotelContextValue {
   setSelectedPeriod: (p: string) => void;
   addHotel: (hotel: NewHotelInput) => Promise<void>;
   deleteHotel: (name: string) => Promise<void>;
-  currentEntry: EntryData;
-  saveEntry: (data: EntryData) => Promise<void>;
-  hasEntry: boolean;
+  monthInfo: MonthInfo | null;
+  monthEntries: Record<string, EntryData>;
+  getEntryForDate: (dateISO: string) => EntryData | null;
+  saveEntryForDate: (dateISO: string, data: EntryData) => Promise<void>;
   kpiData: KPIData[];
   loadingHotels: boolean;
-  loadingEntry: boolean;
+  loadingMonth: boolean;
 }
 
 const HotelContext = createContext<HotelContextValue | null>(null);
@@ -139,9 +195,17 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
   const [selectedHotel, setSelectedHotel] = useState("");
   const [selectedPeriod, setSelectedPeriod] = useState("");
   const [loadingHotels, setLoadingHotels] = useState(true);
-  const [currentEntry, setCurrentEntry] = useState<EntryData>(emptyEntryData());
-  const [hasEntry, setHasEntry] = useState(false);
-  const [loadingEntry, setLoadingEntry] = useState(false);
+  const [monthEntries, setMonthEntries] = useState<Record<string, EntryData>>({});
+  const [loadingMonth, setLoadingMonth] = useState(false);
+
+  const selectedHotelObj = useMemo(
+    () => hotels.find(h => h.name === selectedHotel) ?? null,
+    [hotels, selectedHotel]
+  );
+  const monthInfo = useMemo(
+    () => (selectedPeriod ? periodToMonthInfo(selectedPeriod) : null),
+    [selectedPeriod]
+  );
 
   // Load hotels from Supabase on mount.
   useEffect(() => {
@@ -161,38 +225,36 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     return () => { active = false; };
   }, []);
 
-  // Load the daily report for the selected hotel + period from Supabase.
+  // Load every daily report for the selected hotel within the selected month.
   useEffect(() => {
-    const hotel = hotels.find(h => h.name === selectedHotel);
-    const reportDate = selectedPeriod ? periodToDate(selectedPeriod) : null;
-
-    if (!hotel || !reportDate) {
-      setCurrentEntry(emptyEntryData());
-      setHasEntry(false);
+    if (!selectedHotelObj || !monthInfo) {
+      setMonthEntries({});
       return;
     }
 
     let active = true;
-    setLoadingEntry(true);
+    setLoadingMonth(true);
     (async () => {
       const { data, error } = await supabase
         .from("daily_reports")
         .select("*")
-        .eq("hotel_id", hotel.id)
-        .eq("report_date", reportDate)
-        .maybeSingle();
+        .eq("hotel_id", selectedHotelObj.id)
+        .gte("report_date", monthInfo.startDate)
+        .lte("report_date", monthInfo.endDate);
       if (!active) return;
       if (!error && data) {
-        setCurrentEntry(dbRowToEntryData(data));
-        setHasEntry(true);
+        const byDate: Record<string, EntryData> = {};
+        for (const row of data as DailyReportRow[]) {
+          byDate[row.report_date] = dbRowToEntryData(row);
+        }
+        setMonthEntries(byDate);
       } else {
-        setCurrentEntry(emptyEntryData());
-        setHasEntry(false);
+        setMonthEntries({});
       }
-      setLoadingEntry(false);
+      setLoadingMonth(false);
     })();
     return () => { active = false; };
-  }, [hotels, selectedHotel, selectedPeriod]);
+  }, [selectedHotelObj, monthInfo]);
 
   const addHotel = useCallback(async (hotel: NewHotelInput) => {
     const { data, error } = await supabase
@@ -216,15 +278,18 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     }
   }, [hotels]);
 
-  const saveEntry = useCallback(
-    async (data: EntryData) => {
-      const hotel = hotels.find(h => h.name === selectedHotel);
-      const reportDate = selectedPeriod ? periodToDate(selectedPeriod) : null;
-      if (!hotel || !reportDate) return;
+  const getEntryForDate = useCallback(
+    (dateISO: string) => monthEntries[dateISO] ?? null,
+    [monthEntries]
+  );
+
+  const saveEntryForDate = useCallback(
+    async (dateISO: string, data: EntryData) => {
+      if (!selectedHotelObj) return;
 
       const payload = {
-        hotel_id: hotel.id,
-        report_date: reportDate,
+        hotel_id: selectedHotelObj.id,
+        report_date: dateISO,
         ...entryDataToDbColumns(data),
       };
 
@@ -235,17 +300,20 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
         .single();
 
       if (!error && saved) {
-        setCurrentEntry(dbRowToEntryData(saved));
-        setHasEntry(true);
+        setMonthEntries(prev => ({ ...prev, [dateISO]: dbRowToEntryData(saved) }));
       }
     },
-    [hotels, selectedHotel, selectedPeriod]
+    [selectedHotelObj]
   );
 
   const kpiData = useMemo<KPIData[]>(() => {
+    const entries = Object.values(monthEntries);
+    const rooms = selectedHotelObj?.rooms ?? 0;
+    const { data: aggregated, hasAny } = aggregateEntries(entries, rooms);
+
     return ROW_DEFS.map(rowDef => {
-      const values = currentEntry[rowDef.key];
-      const isEmpty = !hasEntry;
+      const values = aggregated[rowDef.key];
+      const isEmpty = !hasAny;
       const danas = values.naKnjigamaDanas;
       const juce = values.naKnjigamaJuce;
       const target = values.target;
@@ -266,7 +334,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
         pickup,
       } as KPIData & { pickup: number };
     });
-  }, [currentEntry, hasEntry]);
+  }, [monthEntries, selectedHotelObj]);
 
   const value: HotelContextValue = {
     hotels,
@@ -276,12 +344,13 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     setSelectedPeriod,
     addHotel,
     deleteHotel,
-    currentEntry,
-    saveEntry,
-    hasEntry,
+    monthInfo,
+    monthEntries,
+    getEntryForDate,
+    saveEntryForDate,
     kpiData,
     loadingHotels,
-    loadingEntry,
+    loadingMonth,
   };
 
   return <HotelContext.Provider value={value}>{children}</HotelContext.Provider>;
