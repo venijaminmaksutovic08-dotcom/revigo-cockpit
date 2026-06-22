@@ -1,9 +1,17 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react";
+import { supabase, type DailyReportRow } from "../lib/supabaseClient";
 import type { KPIData } from "../data/hotelData";
 
 export interface SavedHotel {
+  id: string;
+  name: string;
+  rooms: number;
+  city: string;
+}
+
+export interface NewHotelInput {
   name: string;
   rooms: number;
   city: string;
@@ -40,6 +48,28 @@ export const COLUMN_DEFS: ColumnDef[] = [
   { key: "target", label: "Target" },
 ];
 
+// Maps each daily_reports jsonb column to the period's column key.
+const DB_COLUMN_BY_KEY: Record<ColumnKey, keyof Pick<DailyReportRow, "last_year" | "same_day_last_year" | "on_books_yesterday" | "on_books_today" | "target">> = {
+  prosleGodine: "last_year",
+  istiDanProsleGodine: "same_day_last_year",
+  naKnjigamaJuce: "on_books_yesterday",
+  naKnjigamaDanas: "on_books_today",
+  target: "target",
+};
+
+const MONTHS_SR = [
+  "Januar", "Februar", "Mart", "April", "Maj", "Jun",
+  "Jul", "Avgust", "Septembar", "Oktobar", "Novembar", "Decembar",
+];
+
+function periodToDate(period: string): string | null {
+  const [monthName, yearStr] = period.split(" ");
+  const monthIndex = MONTHS_SR.indexOf(monthName);
+  const year = Number(yearStr);
+  if (monthIndex === -1 || !year) return null;
+  return `${year}-${String(monthIndex + 1).padStart(2, "0")}-01`;
+}
+
 export type RowValues = Record<ColumnKey, number>;
 export type EntryData = Record<RowKey, RowValues>;
 
@@ -57,16 +87,33 @@ export function emptyEntryData(): EntryData {
   };
 }
 
+function entryDataToDbColumns(data: EntryData) {
+  const columns: Record<string, Record<RowKey, number>> = {};
+  for (const col of COLUMN_DEFS) {
+    const dbKey = DB_COLUMN_BY_KEY[col.key];
+    columns[dbKey] = {} as Record<RowKey, number>;
+    for (const row of ROW_DEFS) {
+      columns[dbKey][row.key] = data[row.key][col.key];
+    }
+  }
+  return columns;
+}
+
+function dbRowToEntryData(row: DailyReportRow): EntryData {
+  const data = emptyEntryData();
+  for (const rowDef of ROW_DEFS) {
+    for (const col of COLUMN_DEFS) {
+      const dbKey = DB_COLUMN_BY_KEY[col.key];
+      const value = Number(row[dbKey]?.[rowDef.key] ?? 0);
+      data[rowDef.key][col.key] = value;
+    }
+  }
+  return data;
+}
+
 function formatNumber(n: number, rowDef: RowDef): string {
   const rounded = rowDef.unit === "%" ? Math.round(n * 10) / 10 : Math.round(n);
   return `${rowDef.prefix ?? ""}${rounded.toLocaleString("sr-RS")}${rowDef.unit ?? ""}`;
-}
-
-const HOTELS_KEY = "revigo_hotels";
-const ENTRIES_KEY = "revigo_entries";
-
-function entryStorageKey(hotel: string, period: string): string {
-  return `${hotel}::${period}`;
 }
 
 interface HotelContextValue {
@@ -75,12 +122,14 @@ interface HotelContextValue {
   selectedPeriod: string;
   setSelectedHotel: (h: string) => void;
   setSelectedPeriod: (p: string) => void;
-  addHotel: (hotel: SavedHotel) => void;
-  deleteHotel: (name: string) => void;
+  addHotel: (hotel: NewHotelInput) => Promise<void>;
+  deleteHotel: (name: string) => Promise<void>;
   currentEntry: EntryData;
-  saveEntry: (data: EntryData) => void;
+  saveEntry: (data: EntryData) => Promise<void>;
   hasEntry: boolean;
   kpiData: KPIData[];
+  loadingHotels: boolean;
+  loadingEntry: boolean;
 }
 
 const HotelContext = createContext<HotelContextValue | null>(null);
@@ -89,77 +138,108 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
   const [hotels, setHotels] = useState<SavedHotel[]>([]);
   const [selectedHotel, setSelectedHotel] = useState("");
   const [selectedPeriod, setSelectedPeriod] = useState("");
-  const [entries, setEntries] = useState<Record<string, EntryData>>({});
+  const [loadingHotels, setLoadingHotels] = useState(true);
+  const [currentEntry, setCurrentEntry] = useState<EntryData>(emptyEntryData());
+  const [hasEntry, setHasEntry] = useState(false);
+  const [loadingEntry, setLoadingEntry] = useState(false);
 
+  // Load hotels from Supabase on mount.
   useEffect(() => {
-    try {
-      const storedHotels = localStorage.getItem(HOTELS_KEY);
-      if (storedHotels) {
-        const parsed: SavedHotel[] = JSON.parse(storedHotels);
-        setHotels(parsed);
-        if (parsed.length > 0) setSelectedHotel(parsed[0].name);
+    let active = true;
+    (async () => {
+      const { data, error } = await supabase
+        .from("hotels")
+        .select("id, name, city, rooms, created_at")
+        .order("created_at", { ascending: true });
+      if (!active) return;
+      if (!error && data) {
+        setHotels(data);
+        if (data.length > 0) setSelectedHotel(data[0].name);
       }
-    } catch {
-      // ignore parse errors
+      setLoadingHotels(false);
+    })();
+    return () => { active = false; };
+  }, []);
+
+  // Load the daily report for the selected hotel + period from Supabase.
+  useEffect(() => {
+    const hotel = hotels.find(h => h.name === selectedHotel);
+    const reportDate = selectedPeriod ? periodToDate(selectedPeriod) : null;
+
+    if (!hotel || !reportDate) {
+      setCurrentEntry(emptyEntryData());
+      setHasEntry(false);
+      return;
     }
-    try {
-      const storedEntries = localStorage.getItem(ENTRIES_KEY);
-      if (storedEntries) setEntries(JSON.parse(storedEntries));
-    } catch {
-      // ignore parse errors
+
+    let active = true;
+    setLoadingEntry(true);
+    (async () => {
+      const { data, error } = await supabase
+        .from("daily_reports")
+        .select("*")
+        .eq("hotel_id", hotel.id)
+        .eq("report_date", reportDate)
+        .maybeSingle();
+      if (!active) return;
+      if (!error && data) {
+        setCurrentEntry(dbRowToEntryData(data));
+        setHasEntry(true);
+      } else {
+        setCurrentEntry(emptyEntryData());
+        setHasEntry(false);
+      }
+      setLoadingEntry(false);
+    })();
+    return () => { active = false; };
+  }, [hotels, selectedHotel, selectedPeriod]);
+
+  const addHotel = useCallback(async (hotel: NewHotelInput) => {
+    const { data, error } = await supabase
+      .from("hotels")
+      .insert({ name: hotel.name, city: hotel.city, rooms: hotel.rooms })
+      .select("id, name, city, rooms, created_at")
+      .single();
+    if (!error && data) {
+      setHotels(prev => [...prev, data]);
+      setSelectedHotel(data.name);
     }
   }, []);
 
-  const addHotel = useCallback((hotel: SavedHotel) => {
-    setHotels(prev => {
-      const updated = [...prev, hotel];
-      try {
-        localStorage.setItem(HOTELS_KEY, JSON.stringify(updated));
-      } catch {
-        // ignore storage errors
-      }
-      return updated;
-    });
-    setSelectedHotel(hotel.name);
-  }, []);
-
-  const deleteHotel = useCallback((name: string) => {
-    setHotels(prev => {
-      const updated = prev.filter(h => h.name !== name);
-      try {
-        localStorage.setItem(HOTELS_KEY, JSON.stringify(updated));
-      } catch {
-        // ignore storage errors
-      }
-      return updated;
-    });
-    setSelectedHotel(prevSelected => (prevSelected === name ? "" : prevSelected));
-  }, []);
-
-  const currentEntry = useMemo<EntryData>(() => {
-    if (!selectedHotel || !selectedPeriod) return emptyEntryData();
-    return entries[entryStorageKey(selectedHotel, selectedPeriod)] ?? emptyEntryData();
-  }, [entries, selectedHotel, selectedPeriod]);
-
-  const hasEntry = useMemo(() => {
-    if (!selectedHotel || !selectedPeriod) return false;
-    return Boolean(entries[entryStorageKey(selectedHotel, selectedPeriod)]);
-  }, [entries, selectedHotel, selectedPeriod]);
+  const deleteHotel = useCallback(async (name: string) => {
+    const hotel = hotels.find(h => h.name === name);
+    if (!hotel) return;
+    const { error } = await supabase.from("hotels").delete().eq("id", hotel.id);
+    if (!error) {
+      setHotels(prev => prev.filter(h => h.id !== hotel.id));
+      setSelectedHotel(prevSelected => (prevSelected === name ? "" : prevSelected));
+    }
+  }, [hotels]);
 
   const saveEntry = useCallback(
-    (data: EntryData) => {
-      if (!selectedHotel || !selectedPeriod) return;
-      setEntries(prev => {
-        const updated = { ...prev, [entryStorageKey(selectedHotel, selectedPeriod)]: data };
-        try {
-          localStorage.setItem(ENTRIES_KEY, JSON.stringify(updated));
-        } catch {
-          // ignore storage errors
-        }
-        return updated;
-      });
+    async (data: EntryData) => {
+      const hotel = hotels.find(h => h.name === selectedHotel);
+      const reportDate = selectedPeriod ? periodToDate(selectedPeriod) : null;
+      if (!hotel || !reportDate) return;
+
+      const payload = {
+        hotel_id: hotel.id,
+        report_date: reportDate,
+        ...entryDataToDbColumns(data),
+      };
+
+      const { data: saved, error } = await supabase
+        .from("daily_reports")
+        .upsert(payload, { onConflict: "hotel_id,report_date" })
+        .select("*")
+        .single();
+
+      if (!error && saved) {
+        setCurrentEntry(dbRowToEntryData(saved));
+        setHasEntry(true);
+      }
     },
-    [selectedHotel, selectedPeriod]
+    [hotels, selectedHotel, selectedPeriod]
   );
 
   const kpiData = useMemo<KPIData[]>(() => {
@@ -200,6 +280,8 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     saveEntry,
     hasEntry,
     kpiData,
+    loadingHotels,
+    loadingEntry,
   };
 
   return <HotelContext.Provider value={value}>{children}</HotelContext.Provider>;

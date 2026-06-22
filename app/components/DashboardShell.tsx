@@ -4,7 +4,7 @@ import { useState } from "react";
 import Sidebar from "./Sidebar";
 import TopBar from "./TopBar";
 import HotelModal from "./HotelModal";
-import { HotelProvider, useHotel, type SavedHotel } from "../context/HotelContext";
+import { HotelProvider, useHotel, type NewHotelInput } from "../context/HotelContext";
 
 const PERIODS = [
   "Januar 2026", "Februar 2026", "Mart 2026",    "April 2026",
@@ -17,8 +17,8 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
   const [showModal, setShowModal] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
-  function handleAddHotel(hotel: SavedHotel) {
-    addHotel(hotel);
+  async function handleAddHotel(hotel: NewHotelInput) {
+    await addHotel(hotel);
     setShowModal(false);
   }
 
