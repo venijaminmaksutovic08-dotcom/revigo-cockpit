@@ -20,6 +20,10 @@ export default function DashboardPage() {
   const { selectedHotel, selectedPeriod, kpiData } = useHotel();
   const canEnterData = Boolean(selectedHotel && selectedPeriod);
 
+  if (process.env.NODE_ENV !== "production") {
+    console.log("[DashboardPage] canEnterData:", canEnterData, "selectedHotel:", JSON.stringify(selectedHotel), "selectedPeriod:", JSON.stringify(selectedPeriod));
+  }
+
   return (
     <>
       <div className="flex items-center justify-between mb-5">
