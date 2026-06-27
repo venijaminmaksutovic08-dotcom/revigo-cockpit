@@ -215,7 +215,7 @@ interface HotelContextValue {
   setSelectedHotel: (h: string) => void;
   setSelectedPeriod: (p: string) => void;
   addHotel: (hotel: NewHotelInput) => Promise<void>;
-  deleteHotel: (name: string) => Promise<void>;
+  deleteHotel: (id: string) => Promise<void>;
   monthInfo: MonthInfo | null;
   monthEntries: Record<string, EntryData>;
   getEntryForDate: (dateISO: string) => EntryData | null;
@@ -240,8 +240,10 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
   const [monthlyTarget, setMonthlyTarget] = useState<MonthlyTargetRow | null>(null);
   const [loadingTargets, setLoadingTargets] = useState(false);
 
+  // selectedHotel holds the hotel's id (not name) so it stays a stable, unambiguous reference
+  // that TopBar and Sidebar both read directly from this context — never a local copy.
   const selectedHotelObj = useMemo(
-    () => hotels.find(h => h.name === selectedHotel) ?? null,
+    () => hotels.find(h => h.id === selectedHotel) ?? null,
     [hotels, selectedHotel]
   );
   const monthInfo = useMemo(
@@ -336,23 +338,21 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
       .single();
     if (!error && data) {
       setHotels(prev => [...prev, data]);
-      setSelectedHotel(data.name);
+      setSelectedHotel(data.id);
     } else if (error) {
       console.error("Failed to add hotel in Supabase:", error.message);
     }
   }, []);
 
-  const deleteHotel = useCallback(async (name: string) => {
-    const hotel = hotels.find(h => h.name === name);
-    if (!hotel) return;
-    const { error } = await supabase.from("hotels").delete().eq("id", hotel.id);
+  const deleteHotel = useCallback(async (id: string) => {
+    const { error } = await supabase.from("hotels").delete().eq("id", id);
     if (!error) {
-      setHotels(prev => prev.filter(h => h.id !== hotel.id));
-      setSelectedHotel(prevSelected => (prevSelected === name ? "" : prevSelected));
+      setHotels(prev => prev.filter(h => h.id !== id));
+      setSelectedHotel(prevSelected => (prevSelected === id ? "" : prevSelected));
     } else {
       console.error("Failed to delete hotel in Supabase:", error.message);
     }
-  }, [hotels]);
+  }, []);
 
   const getEntryForDate = useCallback(
     (dateISO: string) => monthEntries[dateISO] ?? null,

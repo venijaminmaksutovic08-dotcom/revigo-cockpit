@@ -142,11 +142,11 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
             </div>
           ) : (
             hotels.map(h => {
-              const isSelected = h.name === selectedHotel;
+              const isSelected = h.id === selectedHotel;
               return (
                 <div
-                  key={h.name}
-                  onClick={() => { setSelectedHotel(h.name); onClose(); }}
+                  key={h.id}
+                  onClick={() => { setSelectedHotel(h.id); onClose(); }}
                   className="flex items-center gap-2 w-full rounded-lg"
                   style={{
                     height: 44,
@@ -175,7 +175,7 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                     <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 1 }}>{h.city}</div>
                   </div>
                   <button
-                    onClick={e => { e.stopPropagation(); deleteHotel(h.name); }}
+                    onClick={e => { e.stopPropagation(); deleteHotel(h.id); }}
                     className="flex items-center justify-center rounded-md"
                     style={{ width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0 }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.1)"; }}

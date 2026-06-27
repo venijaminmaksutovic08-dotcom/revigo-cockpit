@@ -38,7 +38,7 @@ function DashboardShellInner({ children }: { children: React.ReactNode }) {
           period={selectedPeriod}
           onHotelChange={setSelectedHotel}
           onPeriodChange={setSelectedPeriod}
-          hotels={hotels.map(h => h.name)}
+          hotels={hotels}
           periods={PERIODS}
           onAddHotel={() => setShowModal(true)}
           onDeleteHotel={deleteHotel}

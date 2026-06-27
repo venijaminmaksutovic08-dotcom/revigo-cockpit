@@ -2,20 +2,22 @@
 
 import { useState } from "react";
 import { ChevronDown, Bell, RefreshCw, Plus, Trash2, Menu } from "lucide-react";
+import type { SavedHotel } from "../context/HotelContext";
 
 interface HotelDropdownProps {
   value: string;
-  hotels: string[];
-  onChange: (v: string) => void;
+  hotels: SavedHotel[];
+  onChange: (id: string) => void;
   onAddHotel: () => void;
-  onDeleteHotel: (name: string) => void;
+  onDeleteHotel: (id: string) => void;
 }
 
 function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: HotelDropdownProps) {
   const [open, setOpen] = useState(false);
+  const selectedHotel = hotels.find(h => h.id === value) ?? null;
 
-  function select(name: string) {
-    onChange(name);
+  function select(id: string) {
+    onChange(id);
     setOpen(false);
   }
 
@@ -24,9 +26,9 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: H
     onAddHotel();
   }
 
-  function handleDelete(e: React.MouseEvent, name: string) {
+  function handleDelete(e: React.MouseEvent, id: string) {
     e.stopPropagation();
-    onDeleteHotel(name);
+    onDeleteHotel(id);
   }
 
   return (
@@ -41,12 +43,12 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: H
           display: "flex", alignItems: "center", gap: 8,
           height: 34, paddingLeft: 12, paddingRight: 10,
           background: "#f9fafb", border: "1px solid #e5e7eb",
-          borderRadius: 8, color: value ? "#111827" : "#9ca3af",
-          fontSize: 13, fontWeight: value ? 500 : 400,
+          borderRadius: 8, color: selectedHotel ? "#111827" : "#9ca3af",
+          fontSize: 13, fontWeight: selectedHotel ? 500 : 400,
           cursor: "pointer", minWidth: 180,
         }}
       >
-        <span style={{ flex: 1, textAlign: "left" }}>{value || "Odaberite hotel"}</span>
+        <span style={{ flex: 1, textAlign: "left" }}>{selectedHotel?.name ?? "Odaberite hotel"}</span>
         <ChevronDown size={14} color="#9ca3af" style={{ transform: open ? "rotate(180deg)" : undefined, transition: "transform 0.15s", flexShrink: 0 }} />
       </button>
 
@@ -63,25 +65,25 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: H
               Nema dodanih hotela
             </div>
           ) : (
-            hotels.map(name => (
+            hotels.map(h => (
               <div
-                key={name}
-                onClick={() => select(name)}
+                key={h.id}
+                onClick={() => select(h.id)}
                 className="flex items-center w-full"
                 style={{
                   height: 36, paddingLeft: 12, paddingRight: 8,
-                  fontSize: 13, fontWeight: name === value ? 600 : 400,
-                  color: name === value ? "#C9A84C" : "#374151",
-                  background: name === value ? "rgba(201,168,76,0.06)" : "transparent",
+                  fontSize: 13, fontWeight: h.id === value ? 600 : 400,
+                  color: h.id === value ? "#C9A84C" : "#374151",
+                  background: h.id === value ? "rgba(201,168,76,0.06)" : "transparent",
                   cursor: "pointer", border: "none",
                   borderBottom: "1px solid #f9fafb",
                 }}
-                onMouseEnter={e => { if (name !== value) (e.currentTarget as HTMLElement).style.background = "#f9fafb"; }}
-                onMouseLeave={e => { if (name !== value) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
+                onMouseEnter={e => { if (h.id !== value) (e.currentTarget as HTMLElement).style.background = "#f9fafb"; }}
+                onMouseLeave={e => { if (h.id !== value) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
               >
-                <span style={{ flex: 1, textAlign: "left" }}>{name}</span>
+                <span style={{ flex: 1, textAlign: "left" }}>{h.name}</span>
                 <button
-                  onClick={e => handleDelete(e, name)}
+                  onClick={e => handleDelete(e, h.id)}
                   className="flex items-center justify-center rounded-md"
                   style={{ width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.1)"; }}
@@ -187,12 +189,12 @@ function PeriodDropdown({ value, periods, onChange }: PeriodDropdownProps) {
 interface TopBarProps {
   hotel: string;
   period: string;
-  onHotelChange: (h: string) => void;
+  onHotelChange: (id: string) => void;
   onPeriodChange: (p: string) => void;
-  hotels: string[];
+  hotels: SavedHotel[];
   periods: string[];
   onAddHotel: () => void;
-  onDeleteHotel: (name: string) => void;
+  onDeleteHotel: (id: string) => void;
   onMenuClick: () => void;
 }
 
