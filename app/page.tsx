@@ -1,10 +1,12 @@
 "use client";
 
-import { DollarSign, Moon, BarChart2, Percent, TrendingUp } from "lucide-react";
+import { useState } from "react";
+import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target } from "lucide-react";
 import KPICard from "./components/KPICard";
 import PriceTable from "./components/PriceTable";
 import RightPanel from "./components/RightPanel";
 import DataEntryCalendar from "./components/DataEntryCalendar";
+import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
 import { useHotel, ROW_DEFS } from "./context/HotelContext";
 
@@ -17,12 +19,9 @@ const KPI_ICON_BY_ROW: Record<string, React.ReactNode> = {
 };
 
 export default function DashboardPage() {
-  const { selectedHotel, selectedPeriod, kpiData } = useHotel();
+  const { selectedHotel, selectedPeriod, monthlyTarget, saveMonthlyTargets, kpiData } = useHotel();
   const canEnterData = Boolean(selectedHotel && selectedPeriod);
-
-  if (process.env.NODE_ENV !== "production") {
-    console.log("[DashboardPage] canEnterData:", canEnterData, "selectedHotel:", JSON.stringify(selectedHotel), "selectedPeriod:", JSON.stringify(selectedPeriod));
-  }
+  const [showTargetsModal, setShowTargetsModal] = useState(false);
 
   return (
     <>
@@ -35,6 +34,22 @@ export default function DashboardPage() {
             Pregled ključnih metrika i preporuka
           </div>
         </div>
+
+        {canEnterData && (
+          <button
+            onClick={() => setShowTargetsModal(true)}
+            style={{
+              display: "flex", alignItems: "center", gap: 8,
+              height: 38, paddingLeft: 16, paddingRight: 16,
+              borderRadius: 8, border: "1px solid rgba(201,168,76,0.3)",
+              background: "rgba(201,168,76,0.06)",
+              color: "#C9A84C", fontSize: 13, fontWeight: 600, cursor: "pointer",
+            }}
+          >
+            <Target size={15} />
+            Postavi mesečne targete
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
@@ -52,6 +67,19 @@ export default function DashboardPage() {
         </div>
         <RightPanel actions={priorityActions} revenueGap={revenueGapData} />
       </div>
+
+      {showTargetsModal && (
+        <MonthlyTargetsModal
+          hotel={selectedHotel}
+          periodLabel={selectedPeriod}
+          initialTargets={monthlyTarget}
+          onSave={async input => {
+            await saveMonthlyTargets(input);
+            setShowTargetsModal(false);
+          }}
+          onClose={() => setShowTargetsModal(false)}
+        />
+      )}
     </>
   );
 }

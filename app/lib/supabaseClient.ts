@@ -24,3 +24,15 @@ export interface DailyReportRow {
   target: Record<string, number>;
   created_at: string;
 }
+
+export interface MonthlyTargetRow {
+  id: string;
+  hotel_id: string;
+  year_month: string;
+  revenue_target: number;
+  room_nights_target: number;
+  adr_target: number;
+  occupancy_target: number;
+  revpar_target: number;
+  created_at: string;
+}
