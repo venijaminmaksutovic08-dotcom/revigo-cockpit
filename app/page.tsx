@@ -1,14 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target } from "lucide-react";
+import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target, FileSpreadsheet } from "lucide-react";
 import KPICard from "./components/KPICard";
 import PriceTable from "./components/PriceTable";
 import RightPanel from "./components/RightPanel";
 import DataEntryCalendar from "./components/DataEntryCalendar";
 import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
+import ImportReportModal from "./components/ImportReportModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
 import { useHotel, ROW_DEFS } from "./context/HotelContext";
+import type { ParsedReportRow } from "./lib/reportImport";
 
 const KPI_ICON_BY_ROW: Record<string, React.ReactNode> = {
   brojNocenja:   <Moon       key="nights"  size={18} color="#C9A84C" strokeWidth={2.5} />,
@@ -19,9 +21,10 @@ const KPI_ICON_BY_ROW: Record<string, React.ReactNode> = {
 };
 
 export default function DashboardPage() {
-  const { selectedHotel, selectedPeriod, monthlyTarget, saveMonthlyTargets, kpiData } = useHotel();
+  const { selectedHotel, selectedHotelName, selectedPeriod, monthlyTarget, saveMonthlyTargets, saveEntryForDate, kpiData } = useHotel();
   const canEnterData = Boolean(selectedHotel && selectedPeriod);
   const [showTargetsModal, setShowTargetsModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
 
   return (
     <>
@@ -36,19 +39,34 @@ export default function DashboardPage() {
         </div>
 
         {canEnterData && (
-          <button
-            onClick={() => setShowTargetsModal(true)}
-            style={{
-              display: "flex", alignItems: "center", gap: 8,
-              height: 38, paddingLeft: 16, paddingRight: 16,
-              borderRadius: 8, border: "1px solid rgba(201,168,76,0.3)",
-              background: "rgba(201,168,76,0.06)",
-              color: "#C9A84C", fontSize: 13, fontWeight: 600, cursor: "pointer",
-            }}
-          >
-            <Target size={15} />
-            Postavi mesečne targete
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowImportModal(true)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                height: 38, paddingLeft: 16, paddingRight: 16,
+                borderRadius: 8, border: "1px solid #e5e7eb",
+                background: "#f9fafb",
+                color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              <FileSpreadsheet size={15} />
+              Uvezi izveštaj
+            </button>
+            <button
+              onClick={() => setShowTargetsModal(true)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                height: 38, paddingLeft: 16, paddingRight: 16,
+                borderRadius: 8, border: "1px solid rgba(201,168,76,0.3)",
+                background: "rgba(201,168,76,0.06)",
+                color: "#C9A84C", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              <Target size={15} />
+              Postavi mesečne targete
+            </button>
+          </div>
         )}
       </div>
 
@@ -70,7 +88,7 @@ export default function DashboardPage() {
 
       {showTargetsModal && (
         <MonthlyTargetsModal
-          hotel={selectedHotel}
+          hotel={selectedHotelName}
           periodLabel={selectedPeriod}
           initialTargets={monthlyTarget}
           onSave={async input => {
@@ -78,6 +96,19 @@ export default function DashboardPage() {
             setShowTargetsModal(false);
           }}
           onClose={() => setShowTargetsModal(false)}
+        />
+      )}
+
+      {showImportModal && (
+        <ImportReportModal
+          hotel={selectedHotelName}
+          onConfirm={async (rows: ParsedReportRow[]) => {
+            for (const row of rows) {
+              await saveEntryForDate(row.dateISO, row.data);
+            }
+            setShowImportModal(false);
+          }}
+          onClose={() => setShowImportModal(false)}
         />
       )}
     </>

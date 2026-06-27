@@ -211,6 +211,7 @@ const ROW_TARGET_FIELD: Record<RowKey, keyof Pick<MonthlyTargetRow, "revenue_tar
 interface HotelContextValue {
   hotels: SavedHotel[];
   selectedHotel: string;
+  selectedHotelName: string;
   selectedPeriod: string;
   setSelectedHotel: (h: string) => void;
   setSelectedPeriod: (p: string) => void;
@@ -454,6 +455,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
   const value: HotelContextValue = {
     hotels,
     selectedHotel,
+    selectedHotelName: selectedHotelObj?.name ?? "",
     selectedPeriod,
     setSelectedHotel,
     setSelectedPeriod,

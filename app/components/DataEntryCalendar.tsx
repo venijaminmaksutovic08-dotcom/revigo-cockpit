@@ -33,7 +33,7 @@ function formatDateLabel(year: number, month: number, day: number): string {
 }
 
 export default function DataEntryCalendar() {
-  const { selectedHotel, monthInfo, getEntryForDate, saveEntryForDate, loadingMonth } = useHotel();
+  const { selectedHotelName, monthInfo, getEntryForDate, saveEntryForDate, loadingMonth } = useHotel();
   const [openDay, setOpenDay] = useState<number | null>(null);
 
   if (!monthInfo) return null;
@@ -122,7 +122,7 @@ export default function DataEntryCalendar() {
 
       {openDay !== null && openDate && (
         <DataEntryModal
-          hotel={selectedHotel}
+          hotel={selectedHotelName}
           dateLabel={formatDateLabel(year, month, openDay)}
           initialData={openEntry ?? emptyEntryData()}
           onSave={async data => {

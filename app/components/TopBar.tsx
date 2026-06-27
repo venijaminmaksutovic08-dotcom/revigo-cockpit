@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ChevronDown, Bell, RefreshCw, Plus, Trash2, Menu } from "lucide-react";
 import type { SavedHotel } from "../context/HotelContext";
+import ConfirmDialog from "./ConfirmDialog";
 
 interface HotelDropdownProps {
   value: string;
@@ -14,6 +15,7 @@ interface HotelDropdownProps {
 
 function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: HotelDropdownProps) {
   const [open, setOpen] = useState(false);
+  const [pendingDelete, setPendingDelete] = useState<SavedHotel | null>(null);
   const selectedHotel = hotels.find(h => h.id === value) ?? null;
 
   function select(id: string) {
@@ -26,9 +28,9 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: H
     onAddHotel();
   }
 
-  function handleDelete(e: React.MouseEvent, id: string) {
+  function handleDelete(e: React.MouseEvent, hotelToDelete: SavedHotel) {
     e.stopPropagation();
-    onDeleteHotel(id);
+    setPendingDelete(hotelToDelete);
   }
 
   return (
@@ -83,7 +85,7 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: H
               >
                 <span style={{ flex: 1, textAlign: "left" }}>{h.name}</span>
                 <button
-                  onClick={e => handleDelete(e, h.id)}
+                  onClick={e => handleDelete(e, h)}
                   className="flex items-center justify-center rounded-md"
                   style={{ width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0 }}
                   onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.1)"; }}
@@ -118,6 +120,14 @@ function HotelDropdown({ value, hotels, onChange, onAddHotel, onDeleteHotel }: H
             </button>
           </div>
         </div>
+      )}
+
+      {pendingDelete && (
+        <ConfirmDialog
+          message={`Da li ste sigurni da želite da obrišete hotel ${pendingDelete.name}? Ova akcija se ne može poništiti.`}
+          onConfirm={() => { onDeleteHotel(pendingDelete.id); setPendingDelete(null); }}
+          onCancel={() => setPendingDelete(null)}
+        />
       )}
     </div>
   );

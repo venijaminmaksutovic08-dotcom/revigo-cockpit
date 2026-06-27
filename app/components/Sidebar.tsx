@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -14,7 +15,8 @@ import {
   Hotel,
   Trash2,
 } from "lucide-react";
-import { useHotel } from "../context/HotelContext";
+import { useHotel, type SavedHotel } from "../context/HotelContext";
+import ConfirmDialog from "./ConfirmDialog";
 
 const navItems = [
   { label: "Dashboard",        icon: LayoutDashboard, href: "/"          },
@@ -34,6 +36,7 @@ interface SidebarProps {
 export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
   const pathname = usePathname();
   const { hotels, selectedHotel, setSelectedHotel, deleteHotel } = useHotel();
+  const [pendingDelete, setPendingDelete] = useState<SavedHotel | null>(null);
 
   return (
     <aside
@@ -175,7 +178,7 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                     <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 1 }}>{h.city}</div>
                   </div>
                   <button
-                    onClick={e => { e.stopPropagation(); deleteHotel(h.id); }}
+                    onClick={e => { e.stopPropagation(); setPendingDelete(h); }}
                     className="flex items-center justify-center rounded-md"
                     style={{ width: 24, height: 24, background: "transparent", border: "none", cursor: "pointer", flexShrink: 0 }}
                     onMouseEnter={e => { (e.currentTarget as HTMLElement).style.background = "rgba(220,38,38,0.1)"; }}
@@ -212,6 +215,14 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
           </div>
         </div>
       </div>
+
+      {pendingDelete && (
+        <ConfirmDialog
+          message={`Da li ste sigurni da želite da obrišete hotel ${pendingDelete.name}? Ova akcija se ne može poništiti.`}
+          onConfirm={() => { deleteHotel(pendingDelete.id); setPendingDelete(null); }}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
     </aside>
   );
 }
