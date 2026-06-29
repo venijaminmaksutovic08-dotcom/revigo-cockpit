@@ -15,6 +15,8 @@ export interface DayData {
   isPast: boolean;
 }
 
+export type KPIStatus = "ahead" | "onpace" | "behind" | "empty";
+
 export interface KPIData {
   label: string;
   value: string;
@@ -25,6 +27,11 @@ export interface KPIData {
   achievement: number;
   unit?: string;
   prefix?: string;
+  status: KPIStatus;
+  remainingLabel: string;
+  lastYearValue: number;
+  lastYearLabel: string;
+  yoyChangePct: number | null;
 }
 
 export interface PriorityAction {
@@ -42,14 +49,6 @@ export interface RevenueGapItem {
 }
 
 export const dailyData: DayData[] = [];
-
-export const kpiData: KPIData[] = [
-  { label: "Ukupan Prihod",  value: "—", rawValue: 0, target: "—", rawTarget: 0, gap: "—", achievement: 0 },
-  { label: "Broj Noćenja",   value: "—", rawValue: 0, target: "—", rawTarget: 0, gap: "—", achievement: 0 },
-  { label: "ADR",            value: "—", rawValue: 0, target: "—", rawTarget: 0, gap: "—", achievement: 0 },
-  { label: "Popunjenost",    value: "—", rawValue: 0, target: "—", rawTarget: 0, gap: "—", achievement: 0 },
-  { label: "RevPAR",         value: "—", rawValue: 0, target: "—", rawTarget: 0, gap: "—", achievement: 0 },
-];
 
 export const revenueGapData = {
   total: 0,

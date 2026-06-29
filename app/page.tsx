@@ -6,6 +6,7 @@ import KPICard from "./components/KPICard";
 import PriceTable from "./components/PriceTable";
 import RightPanel from "./components/RightPanel";
 import DataEntryCalendar from "./components/DataEntryCalendar";
+import MonthAtAGlance from "./components/MonthAtAGlance";
 import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
 import ImportReportModal from "./components/ImportReportModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
@@ -69,6 +70,8 @@ export default function DashboardPage() {
           </div>
         )}
       </div>
+
+      {canEnterData && <MonthAtAGlance />}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
         {kpiData.map(kpi => {

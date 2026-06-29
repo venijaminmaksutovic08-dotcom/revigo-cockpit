@@ -2,7 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react";
 import { supabase, type DailyReportRow, type MonthlyTargetRow } from "../lib/supabaseClient";
-import type { KPIData } from "../data/hotelData";
+import type { KPIData, KPIStatus } from "../data/hotelData";
 
 export interface SavedHotel {
   id: string;
@@ -156,6 +156,31 @@ function formatNumber(n: number, rowDef: RowDef): string {
   return `${rowDef.prefix ?? ""}${rounded.toLocaleString("sr-RS")}${rowDef.unit ?? ""}`;
 }
 
+// Ahead: pacing to beat the monthly target. On Pace: within striking distance (85-100%). Behind: needs attention.
+function statusFor(achievement: number, hasTarget: boolean, valueIsEmpty: boolean): KPIStatus {
+  if (valueIsEmpty || !hasTarget) return "empty";
+  if (achievement >= 100) return "ahead";
+  if (achievement >= 85) return "onpace";
+  return "behind";
+}
+
+export interface MonthProgress {
+  daysElapsed: number;
+  daysInMonth: number;
+  daysRemaining: number;
+  percentElapsed: number;
+}
+
+export function getMonthProgress(monthInfo: MonthInfo): MonthProgress {
+  const daysElapsed = getMtdDayCount(monthInfo);
+  return {
+    daysElapsed,
+    daysInMonth: monthInfo.daysInMonth,
+    daysRemaining: Math.max(0, monthInfo.daysInMonth - daysElapsed),
+    percentElapsed: monthInfo.daysInMonth > 0 ? Math.round((daysElapsed / monthInfo.daysInMonth) * 100) : 0,
+  };
+}
+
 // Revenue achievement vs. target on a given day's entry, used for calendar cell coloring.
 export function getDayStatus(entry: EntryData | undefined | null): DayStatus {
   if (!entry) return "none";
@@ -223,6 +248,7 @@ interface HotelContextValue {
   saveEntryForDate: (dateISO: string, data: EntryData) => Promise<void>;
   monthlyTarget: MonthlyTargetRow | null;
   saveMonthlyTargets: (input: MonthlyTargetsInput) => Promise<void>;
+  monthProgress: MonthProgress | null;
   kpiData: KPIData[];
   loadingHotels: boolean;
   loadingMonth: boolean;
@@ -432,10 +458,20 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
       const valueIsEmpty = !hasAny;
       const danas = values.naKnjigamaDanas;
       const juce = values.naKnjigamaJuce;
+      const lastYear = values.prosleGodine;
       const target = monthlyTarget ? monthlyTarget[ROW_TARGET_FIELD[rowDef.key]] : 0;
       const pickup = danas - juce;
       const gap = danas - target;
       const achievement = hasTarget && target !== 0 ? Math.round((danas / target) * 1000) / 10 : 0;
+      const remaining = target - danas;
+      const yoyChangePct = !valueIsEmpty && lastYear !== 0 ? Math.round(((danas - lastYear) / lastYear) * 1000) / 10 : null;
+
+      let remainingLabel = "—";
+      if (!valueIsEmpty && hasTarget) {
+        remainingLabel = remaining > 0
+          ? `${formatNumber(remaining, rowDef)} preostalo`
+          : `${formatNumber(Math.abs(remaining), rowDef)} iznad targeta`;
+      }
 
       return {
         label: rowDef.label,
@@ -448,9 +484,16 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
         unit: rowDef.unit,
         prefix: rowDef.prefix,
         pickup,
+        status: statusFor(achievement, hasTarget, valueIsEmpty),
+        remainingLabel,
+        lastYearValue: lastYear,
+        lastYearLabel: valueIsEmpty ? "—" : formatNumber(lastYear, rowDef),
+        yoyChangePct,
       } as KPIData & { pickup: number };
     });
   }, [monthEntries, selectedHotelObj, monthInfo, monthlyTarget]);
+
+  const monthProgress = useMemo(() => (monthInfo ? getMonthProgress(monthInfo) : null), [monthInfo]);
 
   const value: HotelContextValue = {
     hotels,
@@ -467,6 +510,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     saveEntryForDate,
     monthlyTarget,
     saveMonthlyTargets,
+    monthProgress,
     kpiData,
     loadingHotels,
     loadingMonth,
