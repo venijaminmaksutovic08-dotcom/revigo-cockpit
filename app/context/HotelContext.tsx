@@ -191,27 +191,42 @@ export function getDayStatus(entry: EntryData | undefined | null): DayStatus {
   return "red";
 }
 
-// Sums the two additive metrics across a set of daily entries and re-derives ADR/Popunjenost/RevPAR from the
-// totals. `availableDays` is the number of days the room inventory was actually open for in this range (not just
-// the count of days with data entered) — Occupancy/RevPAR divide by rooms * availableDays, never ADR * Occupancy.
-function aggregateEntries(entries: EntryData[], rooms: number, availableDays: number): { data: EntryData; hasAny: boolean } {
+// Aggregates daily entries into a single summary row.
+// Room Nights and Revenue are summed; ADR is derived from those sums.
+// Occupancy and RevPAR use the values the user directly entered in the daily form
+// (averaged across days with a non-zero entry). This avoids a dependency on the hotel's
+// room count being perfectly accurate and ensures the KPI dashboard matches what users see
+// when they enter data.
+function aggregateEntries(entries: EntryData[], _rooms: number, _availableDays: number): { data: EntryData; hasAny: boolean } {
   const data = emptyEntryData();
   if (entries.length === 0) return { data, hasAny: false };
-
-  const roomNights = rooms * availableDays;
 
   for (const col of COLUMN_DEFS) {
     let brojNocenjaSum = 0;
     let ukupanPrihodSum = 0;
+    let popunjenostSum = 0;
+    let popunjenostCount = 0;
+    let revparSum = 0;
+    let revparCount = 0;
+
     for (const entry of entries) {
       brojNocenjaSum += entry.brojNocenja[col.key];
       ukupanPrihodSum += entry.ukupanPrihod[col.key];
+      if (entry.popunjenost[col.key] !== 0) {
+        popunjenostSum += entry.popunjenost[col.key];
+        popunjenostCount++;
+      }
+      if (entry.revpar[col.key] !== 0) {
+        revparSum += entry.revpar[col.key];
+        revparCount++;
+      }
     }
+
     data.brojNocenja[col.key] = brojNocenjaSum;
     data.ukupanPrihod[col.key] = ukupanPrihodSum;
     data.adr[col.key] = brojNocenjaSum > 0 ? ukupanPrihodSum / brojNocenjaSum : 0;
-    data.popunjenost[col.key] = roomNights > 0 ? (brojNocenjaSum / roomNights) * 100 : 0;
-    data.revpar[col.key] = roomNights > 0 ? ukupanPrihodSum / roomNights : 0;
+    data.popunjenost[col.key] = popunjenostCount > 0 ? popunjenostSum / popunjenostCount : 0;
+    data.revpar[col.key] = revparCount > 0 ? revparSum / revparCount : 0;
   }
 
   return { data, hasAny: true };
