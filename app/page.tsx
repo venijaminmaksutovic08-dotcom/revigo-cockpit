@@ -11,6 +11,7 @@ import PaceForecasting from "./components/PaceForecasting";
 import ManagerNotes from "./components/ManagerNotes";
 import WeatherWidget from "./components/WeatherWidget";
 import EventsWidget from "./components/EventsWidget";
+import CompetitorPrices from "./components/CompetitorPrices";
 import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
 import ImportReportModal from "./components/ImportReportModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
@@ -88,6 +89,7 @@ export default function DashboardPage() {
       {canEnterData && <ManagerNotes />}
       {selectedHotel && <WeatherWidget />}
       {canEnterData && <EventsWidget />}
+      {selectedHotel && <CompetitorPrices />}
 
       {canEnterData && <DataEntryCalendar />}
 
