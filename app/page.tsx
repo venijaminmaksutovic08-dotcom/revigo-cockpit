@@ -7,6 +7,8 @@ import PriceTable from "./components/PriceTable";
 import RightPanel from "./components/RightPanel";
 import DataEntryCalendar from "./components/DataEntryCalendar";
 import MonthAtAGlance from "./components/MonthAtAGlance";
+import PaceForecasting from "./components/PaceForecasting";
+import ManagerNotes from "./components/ManagerNotes";
 import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
 import ImportReportModal from "./components/ImportReportModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
@@ -79,6 +81,9 @@ export default function DashboardPage() {
           return <KPICard key={kpi.label} data={kpi} icon={KPI_ICON_BY_ROW[rowKey]} />;
         })}
       </div>
+
+      {canEnterData && <PaceForecasting />}
+      {canEnterData && <ManagerNotes />}
 
       {canEnterData && <DataEntryCalendar />}
 

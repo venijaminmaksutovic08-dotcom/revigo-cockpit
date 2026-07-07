@@ -34,5 +34,6 @@ export interface MonthlyTargetRow {
   adr_target: number;
   occupancy_target: number;
   revpar_target: number;
+  notes: string | null;
   created_at: string;
 }

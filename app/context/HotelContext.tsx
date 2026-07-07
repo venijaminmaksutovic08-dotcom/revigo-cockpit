@@ -240,6 +240,21 @@ export interface MonthlyTargetsInput {
   revparTarget: number;
 }
 
+export type PaceForecastStatus = "on_track" | "at_risk" | "off_track" | "no_target";
+
+export interface PaceForecastItem {
+  label: string;
+  mtdFormatted: string;
+  projectedFormatted: string;
+  targetFormatted: string;
+  projectedPct: number;
+  status: PaceForecastStatus;
+}
+
+export type PaceForecastResult =
+  | { available: true; items: PaceForecastItem[]; daysWithData: number; daysRemaining: number; daysInMonth: number }
+  | { available: false; reason: "past_month" | "insufficient_data"; daysWithData: number };
+
 const ROW_TARGET_FIELD: Record<RowKey, keyof Pick<MonthlyTargetRow, "revenue_target" | "room_nights_target" | "adr_target" | "occupancy_target" | "revpar_target">> = {
   brojNocenja: "room_nights_target",
   ukupanPrihod: "revenue_target",
@@ -265,6 +280,8 @@ interface HotelContextValue {
   saveMonthlyTargets: (input: MonthlyTargetsInput) => Promise<void>;
   monthProgress: MonthProgress | null;
   kpiData: KPIData[];
+  paceForecast: PaceForecastResult | null;
+  saveNotes: (notes: string) => Promise<void>;
   loadingHotels: boolean;
   loadingMonth: boolean;
   loadingTargets: boolean;
@@ -508,7 +525,79 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     });
   }, [monthEntries, selectedHotelObj, monthInfo, monthlyTarget]);
 
+  const saveNotes = useCallback(
+    async (notes: string) => {
+      if (!selectedHotelObj || !monthInfo) return;
+      // Upsert only the notes column; target columns keep existing values (or DB default 0 for new rows).
+      const { data: saved, error } = await supabase
+        .from("monthly_targets")
+        .upsert(
+          { hotel_id: selectedHotelObj.id, year_month: monthInfoToYearMonth(monthInfo), notes },
+          { onConflict: "hotel_id,year_month" }
+        )
+        .select("*")
+        .maybeSingle();
+      if (!error && saved) setMonthlyTarget(saved);
+      else if (error) console.error("Failed to save notes:", error.message);
+    },
+    [selectedHotelObj, monthInfo]
+  );
+
   const monthProgress = useMemo(() => (monthInfo ? getMonthProgress(monthInfo) : null), [monthInfo]);
+
+  const paceForecast = useMemo<PaceForecastResult | null>(() => {
+    if (!monthInfo) return null;
+
+    // Only show for the current month — past months are complete, future months have no data.
+    const now = new Date();
+    const isCurrentMonth = now.getFullYear() === monthInfo.year && now.getMonth() + 1 === monthInfo.month;
+    if (!isCurrentMonth) return { available: false, reason: "past_month", daysWithData: 0 };
+
+    const mtdDayCount = getMtdDayCount(monthInfo);
+    const daysWithData = Object.keys(monthEntries).filter(
+      d => Number(d.slice(8, 10)) <= mtdDayCount
+    ).length;
+
+    if (daysWithData < 3) {
+      return { available: false, reason: "insufficient_data", daysWithData };
+    }
+
+    const daysInMonth = monthInfo.daysInMonth;
+    const daysRemaining = daysInMonth - daysWithData;
+
+    const items: PaceForecastItem[] = kpiData.map(kpi => {
+      const rowDef = ROW_DEFS.find(r => r.label === kpi.label)!;
+      const isAdditive = rowDef.key === "brojNocenja" || rowDef.key === "ukupanPrihod";
+      const mtd = kpi.rawValue;
+      const target = kpi.rawTarget;
+
+      // Additive metrics (Revenue, Room Nights): project forward at current daily average.
+      // Rate metrics (ADR, Occupancy, RevPAR): current average IS the projected EOM average.
+      const projected = isAdditive && daysWithData > 0
+        ? mtd + (mtd / daysWithData) * daysRemaining
+        : mtd;
+
+      const projectedPct = target > 0 ? Math.round((projected / target) * 1000) / 10 : 0;
+      const status: PaceForecastStatus = target === 0
+        ? "no_target"
+        : projectedPct >= 95
+          ? "on_track"
+          : projectedPct >= 80
+            ? "at_risk"
+            : "off_track";
+
+      return {
+        label: kpi.label,
+        mtdFormatted: kpi.value,
+        projectedFormatted: kpi.status === "empty" ? "—" : formatNumber(projected, rowDef),
+        targetFormatted: kpi.target,
+        projectedPct,
+        status,
+      };
+    });
+
+    return { available: true, items, daysWithData, daysRemaining, daysInMonth };
+  }, [monthInfo, monthEntries, kpiData]);
 
   const value: HotelContextValue = {
     hotels,
@@ -527,6 +616,8 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     saveMonthlyTargets,
     monthProgress,
     kpiData,
+    paceForecast,
+    saveNotes,
     loadingHotels,
     loadingMonth,
     loadingTargets,
