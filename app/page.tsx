@@ -10,6 +10,7 @@ import MonthAtAGlance from "./components/MonthAtAGlance";
 import PaceForecasting from "./components/PaceForecasting";
 import ManagerNotes from "./components/ManagerNotes";
 import WeatherWidget from "./components/WeatherWidget";
+import EventsWidget from "./components/EventsWidget";
 import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
 import ImportReportModal from "./components/ImportReportModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
@@ -86,6 +87,7 @@ export default function DashboardPage() {
       {canEnterData && <PaceForecasting />}
       {canEnterData && <ManagerNotes />}
       {selectedHotel && <WeatherWidget />}
+      {canEnterData && <EventsWidget />}
 
       {canEnterData && <DataEntryCalendar />}
 
