@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useHotel, dateToISO, MONTHS_SR } from "../context/HotelContext";
-import { useWeatherForecast } from "./useWeatherForecast";
 import { supabase } from "../lib/supabaseClient";
 
 export type ActionSeverity = "red" | "yellow" | "green";
@@ -66,10 +65,7 @@ export function useBriefingItems() {
 
   const yesterdayMissing = yesterdayInDb === false;
 
-  // ── 2. Weather data ───────────────────────────────────────────────────────────
-  const { status: weatherStatus, days: weatherDays } = useWeatherForecast(city);
-
-  // ── 3. Events count ───────────────────────────────────────────────────────────
+  // ── 2. Events count ───────────────────────────────────────────────────────────
   const [eventCount, setEventCount] = useState<number | null>(null);
 
   useEffect(() => {
@@ -116,7 +112,7 @@ export function useBriefingItems() {
           id:       `pace-red-${item.label}`,
           severity: "red",
           emoji:    "📉",
-          message:  `${item.label} kasni — projekcija ${item.projectedPct}% targeta`,
+          message:  `${item.label} kritično kasni — projekcija ${item.projectedPct}% targeta`,
           detail:   `Trenutno: ${item.mtdFormatted} • Projekcija: ${item.projectedFormatted} • Target: ${item.targetFormatted}`,
         });
       }
@@ -131,61 +127,39 @@ export function useBriefingItems() {
       }
     }
 
-    // 3. Weather alert
-    if (weatherStatus === "ok" && weatherDays.length > 0) {
-      const badDays = weatherDays
-        .filter(d => d.precipitation > 5 || d.weatherCode >= 80)
-        .sort((a, b) => b.precipitation - a.precipitation);
-
-      if (badDays.length > 0) {
-        const worst = badDays[0];
-        result.push({
-          id:       "weather",
-          severity: "yellow",
-          emoji:    "🌧️",
-          message:  worst.precipitation > 0
-            ? `${worst.dayLabel}: ${worst.precipitation}mm kiše — razmotri prilagođavanje cena`
-            : `${worst.dayLabel}: loše vreme — razmotri prilagođavanje cena`,
-          detail:   `Ukupno ${badDays.length} ${badDays.length === 1 ? "dan" : "dana"} s lošim vremenom u narednih 7 dana.`,
-        });
-      }
-    }
-
-    // 4. Local events
+    // 3. Local events
     if (eventCount !== null && eventCount > 0 && monthInfo) {
       result.push({
         id:          "events",
         severity:    "green",
         emoji:       "🎉",
         message:     `${eventCount} ${eventCount === 1 ? "događaj" : "događaja"} ovog meseca — proveri cene`,
-        detail:      `Lokalni događaji mogu povećati potražnju. Prilagodi cene da iskoristiš maksimum.`,
+        detail:      "Lokalni događaji mogu povećati potražnju. Prilagodi cene da iskoristiš maksimum.",
         actionLabel: "Vidi događaje",
         actionHref:  "/",
       });
     }
 
-    // 5. Monthly target reminders
+    // 4. Monthly target reminders
     if (monthInfo) {
       const now = new Date();
       const isCurrentMonth = now.getFullYear() === monthInfo.year && now.getMonth() + 1 === monthInfo.month;
       if (isCurrentMonth) {
-        const dayOfMonth = now.getDate();
-
-        if (dayOfMonth <= 7 && !monthlyTarget) {
+        if (!monthlyTarget) {
           result.push({
             id:          "set-targets",
             severity:    "yellow",
             emoji:       "📋",
-            message:     `Postavi mesečne targete za ${MONTHS_SR[monthInfo.month - 1]}`,
-            detail:      "Bez targeta nema praćenja napretka — postavi ih na početku meseca.",
+            message:     `Mesečni targeti nisu postavljeni`,
+            detail:      "Bez targeta nema praćenja napretka — postavi ih odmah.",
             actionLabel: "Postavi targete",
             actionHref:  "/",
           });
         }
 
         if (monthProgress && monthProgress.daysRemaining <= 7 && monthProgress.daysRemaining > 0 && monthlyTarget) {
-          const revenueKPI  = kpiData.find(k => k.label === "Ukupan Prihod");
-          const revenueGap  = revenueKPI && monthlyTarget.revenue_target > 0
+          const revenueKPI = kpiData.find(k => k.label === "Ukupan Prihod");
+          const revenueGap = revenueKPI && monthlyTarget.revenue_target > 0
             ? monthlyTarget.revenue_target - revenueKPI.rawValue
             : 0;
           if (revenueGap > 0) {
@@ -209,11 +183,9 @@ export function useBriefingItems() {
       .slice(0, 5);
   }, [
     selectedHotel, yesterdayMissing,
-    paceForecast, weatherStatus, weatherDays,
-    eventCount, monthInfo, monthlyTarget, monthProgress, kpiData,
+    paceForecast, eventCount,
+    monthInfo, monthlyTarget, monthProgress, kpiData,
   ]);
 
-  const ready = weatherStatus !== "loading";
-
-  return { items, ready };
+  return { items, ready: true };
 }
