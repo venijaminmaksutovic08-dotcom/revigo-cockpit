@@ -130,14 +130,14 @@ export default function CompetitorPrices() {
     const { checkin, checkout } = getTomorrowDates();
     setMarketCheckin(checkin);
     try {
-      const params = new URLSearchParams({ location: city, checkin, checkout });
+      const params = new URLSearchParams({ location: city, checkin, checkout, ownHotel: hotel?.name ?? "" });
       const res  = await fetch(`/api/competitors?${params}`);
       const data = res.ok ? (await res.json() as CompetitorResult[]) : [];
       setMarketResults(data);
     } finally {
       setMarketLoading(false);
     }
-  }, [city, marketLoading]);
+  }, [city, marketLoading, hotel]);
 
   // ── Per-competitor lookup ────────────────────────────────────────────────────
 
