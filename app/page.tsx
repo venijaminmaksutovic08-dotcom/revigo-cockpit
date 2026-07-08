@@ -5,6 +5,7 @@ import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target, FileSpreadshe
 import KPICard from "./components/KPICard";
 import PriceTable from "./components/PriceTable";
 import RightPanel from "./components/RightPanel";
+import DailyBriefing from "./components/DailyBriefing";
 import MonthAtAGlance from "./components/MonthAtAGlance";
 import PaceForecasting from "./components/PaceForecasting";
 import ManagerNotes from "./components/ManagerNotes";
@@ -33,6 +34,8 @@ export default function DashboardPage() {
 
   return (
     <>
+      <DailyBriefing />
+
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 style={{ fontSize: 20, fontWeight: 800, color: "#111827", letterSpacing: "-0.02em", margin: 0, lineHeight: 1.2 }}>
