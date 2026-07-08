@@ -10,6 +10,7 @@ import {
   BarChart3,
   Zap,
   PenLine,
+  Scale,
   FileText,
   ChevronRight,
   Hotel,
@@ -20,8 +21,9 @@ import ConfirmDialog from "./ConfirmDialog";
 
 const navItems = [
   { label: "Dashboard",       icon: LayoutDashboard, href: "/"         },
-  { label: "Unos Podataka",   icon: PenLine,         href: "/unos",    highlight: true },
-  { label: "Mesečni Pregled", icon: CalendarDays,    href: "/mesecni"  },
+  { label: "Unos Podataka",      icon: PenLine,      href: "/unos",       highlight: true },
+  { label: "Poređenje Perioda",  icon: Scale,        href: "/poredjenje" },
+  { label: "Mesečni Pregled",    icon: CalendarDays, href: "/mesecni"    },
   { label: "Preporuka Cena",  icon: TrendingUp,      href: "/preporuka"},
   { label: "Pickup Analiza",  icon: BarChart3,       href: "/pickup"   },
   { label: "Centar Akcija",   icon: Zap,             href: "/akcija"   },
