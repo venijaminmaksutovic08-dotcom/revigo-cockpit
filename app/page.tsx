@@ -5,7 +5,6 @@ import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target, FileSpreadshe
 import KPICard from "./components/KPICard";
 import PriceTable from "./components/PriceTable";
 import RightPanel from "./components/RightPanel";
-import DataEntryCalendar from "./components/DataEntryCalendar";
 import MonthAtAGlance from "./components/MonthAtAGlance";
 import PaceForecasting from "./components/PaceForecasting";
 import ManagerNotes from "./components/ManagerNotes";
@@ -90,8 +89,6 @@ export default function DashboardPage() {
       {selectedHotel && <WeatherWidget />}
       {canEnterData && <EventsWidget />}
       {selectedHotel && <CompetitorPrices />}
-
-      {canEnterData && <DataEntryCalendar />}
 
       <div className="flex flex-col md:flex-row gap-4 items-start">
         <div className="flex-1 min-w-0 w-full">

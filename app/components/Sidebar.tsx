@@ -9,7 +9,7 @@ import {
   TrendingUp,
   BarChart3,
   Zap,
-  Calendar,
+  PenLine,
   FileText,
   ChevronRight,
   Hotel,
@@ -19,13 +19,13 @@ import { useHotel, type SavedHotel } from "../context/HotelContext";
 import ConfirmDialog from "./ConfirmDialog";
 
 const navItems = [
-  { label: "Dashboard",        icon: LayoutDashboard, href: "/"          },
-  { label: "Mesečni Pregled",  icon: CalendarDays,    href: "/mesecni"   },
-  { label: "Preporuka Cena",   icon: TrendingUp,      href: "/preporuka" },
-  { label: "Pickup Analiza",   icon: BarChart3,        href: "/pickup"    },
-  { label: "Centar Akcija",    icon: Zap,             href: "/akcija"    },
-  { label: "Kalendar Prihoda", icon: Calendar,        href: "/kalendar"  },
-  { label: "Izveštaji",        icon: FileText,        href: "/izvestaji" },
+  { label: "Dashboard",       icon: LayoutDashboard, href: "/"         },
+  { label: "Unos Podataka",   icon: PenLine,         href: "/unos",    highlight: true },
+  { label: "Mesečni Pregled", icon: CalendarDays,    href: "/mesecni"  },
+  { label: "Preporuka Cena",  icon: TrendingUp,      href: "/preporuka"},
+  { label: "Pickup Analiza",  icon: BarChart3,       href: "/pickup"   },
+  { label: "Centar Akcija",   icon: Zap,             href: "/akcija"   },
+  { label: "Izveštaji",       icon: FileText,        href: "/izvestaji"},
 ];
 
 interface SidebarProps {
@@ -86,7 +86,7 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
 
       {/* Nav items */}
       <nav className="flex flex-col gap-0.5 px-3">
-        {navItems.map(({ label, icon: Icon, href }) => {
+        {navItems.map(({ label, icon: Icon, href, highlight }) => {
           const isActive = pathname === href;
           return (
             <Link
@@ -99,26 +99,30 @@ export default function Sidebar({ mobileOpen, onClose }: SidebarProps) {
                 paddingLeft: isActive ? 14 : 16,
                 paddingRight: 12,
                 borderLeft: isActive ? "2px solid #C9A84C" : "2px solid transparent",
-                background: isActive ? "rgba(201,168,76,0.08)" : "transparent",
+                background: isActive
+                  ? "rgba(201,168,76,0.1)"
+                  : highlight
+                    ? "rgba(201,168,76,0.04)"
+                    : "transparent",
                 textDecoration: "none",
               }}
               onMouseEnter={e => {
-                if (!isActive) (e.currentTarget as HTMLElement).style.background = "#f9fafb";
+                if (!isActive) (e.currentTarget as HTMLElement).style.background = "rgba(201,168,76,0.08)";
               }}
               onMouseLeave={e => {
-                if (!isActive) (e.currentTarget as HTMLElement).style.background = "transparent";
+                if (!isActive) (e.currentTarget as HTMLElement).style.background = highlight ? "rgba(201,168,76,0.04)" : "transparent";
               }}
             >
               <Icon
                 size={16}
-                color={isActive ? "#C9A84C" : "#9ca3af"}
-                strokeWidth={isActive ? 2.5 : 2}
+                color={isActive ? "#C9A84C" : highlight ? "#C9A84C" : "#9ca3af"}
+                strokeWidth={isActive || highlight ? 2.5 : 2}
               />
               <span
                 style={{
                   fontSize: 13,
-                  fontWeight: isActive ? 600 : 500,
-                  color: isActive ? "#111827" : "#6b7280",
+                  fontWeight: isActive ? 600 : highlight ? 600 : 500,
+                  color: isActive ? "#111827" : highlight ? "#92710a" : "#6b7280",
                   flex: 1,
                 }}
               >

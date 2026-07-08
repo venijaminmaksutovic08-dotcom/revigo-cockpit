@@ -38,6 +38,8 @@ function formatDateLabel(year: number, month: number, day: number): string {
 
 type ModalMode = "action" | "manual" | "import" | null;
 
+const TODAY = new Date();
+
 export default function DataEntryCalendar() {
   const {
     selectedHotelName,
@@ -137,6 +139,7 @@ export default function DataEntryCalendar() {
           const hasData   = entry !== null;
           const status    = getDayStatus(entry);
           const styles    = STATUS_STYLES[status];
+          const isToday   = TODAY.getFullYear() === year && TODAY.getMonth() + 1 === month && TODAY.getDate() === day;
 
           return (
             <button
@@ -148,20 +151,26 @@ export default function DataEntryCalendar() {
                 padding: "8px 10px",
                 borderRight: "1px solid #f3f4f6",
                 borderBottom: "1px solid #f3f4f6",
-                background: styles.bg,
+                background: isToday && !hasData ? "rgba(201,168,76,0.06)" : styles.bg,
                 cursor: "pointer",
                 border: "none",
                 borderRadius: 0,
+                outline: isToday ? "2px solid rgba(201,168,76,0.4)" : "none",
+                outlineOffset: "-2px",
               }}
               onMouseEnter={e => { (e.currentTarget as HTMLElement).style.filter = "brightness(0.97)"; }}
               onMouseLeave={e => { (e.currentTarget as HTMLElement).style.filter = "none"; }}
             >
               {/* Day number + status dot */}
               <div className="flex items-center justify-between w-full">
-                <span style={{ fontSize: 13, fontWeight: 600, color: "#374151", fontVariantNumeric: "tabular-nums" }}>
+                <span style={{
+                  fontSize: 13,
+                  fontWeight: isToday ? 800 : 600,
+                  color: isToday ? "#C9A84C" : "#374151",
+                  fontVariantNumeric: "tabular-nums",
+                }}>
                   {day}
                 </span>
-                {/* Green checkmark for any day with saved data */}
                 {hasData && status === "none" && (
                   <span style={{ fontSize: 10, color: "#6b7280", lineHeight: 1 }}>✓</span>
                 )}
@@ -180,9 +189,9 @@ export default function DataEntryCalendar() {
                 </span>
               )}
 
-              {/* "no data" subtle cue */}
+              {/* "no data" cue */}
               {!hasData && (
-                <span style={{ fontSize: 10, color: "#e5e7eb", marginTop: 4 }}>—</span>
+                <span style={{ fontSize: 11, color: "#d1d5db", marginTop: 4, lineHeight: 1 }}>+</span>
               )}
             </button>
           );
