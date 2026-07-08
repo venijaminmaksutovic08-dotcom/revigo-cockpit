@@ -4,10 +4,26 @@ import { AlertTriangle, CalendarClock } from "lucide-react";
 import { useHotel } from "../context/HotelContext";
 
 const STATUS_CONFIG = {
-  ahead:  { emoji: "🟢", label: "Na dobrom putu", sub: "Iznad mesečnog targeta", color: "#16a34a", bg: "rgba(34,197,94,0.06)", border: "rgba(34,197,94,0.25)" },
-  onpace: { emoji: "🟡", label: "U okviru plana",  sub: "Blizu mesečnog targeta", color: "#ca8a04", bg: "rgba(234,179,8,0.06)", border: "rgba(234,179,8,0.25)" },
-  behind: { emoji: "🔴", label: "Kasnimo za planom", sub: "Ispod mesečnog targeta", color: "#dc2626", bg: "rgba(239,68,68,0.06)", border: "rgba(239,68,68,0.25)" },
-  empty:  { emoji: "⚪", label: "Nema podataka",     sub: "Unesite dnevne podatke da vidite status", color: "#9ca3af", bg: "#f9fafb", border: "#e5e7eb" },
+  ahead:  {
+    emoji: "🚀", label: "Na dobrom putu", sub: "Iznad mesečnog targeta",
+    gradient: "linear-gradient(135deg, #065F46 0%, #047857 100%)",
+    bar: "rgba(255,255,255,0.3)", badgeBg: "rgba(255,255,255,0.12)", badgeBorder: "rgba(255,255,255,0.2)",
+  },
+  onpace: {
+    emoji: "📊", label: "U okviru plana", sub: "Blizu mesečnog targeta",
+    gradient: "linear-gradient(135deg, #78350F 0%, #92400E 100%)",
+    bar: "rgba(255,255,255,0.3)", badgeBg: "rgba(255,255,255,0.12)", badgeBorder: "rgba(255,255,255,0.2)",
+  },
+  behind: {
+    emoji: "⚠️", label: "Kasnimo za planom", sub: "Ispod mesečnog targeta",
+    gradient: "linear-gradient(135deg, #7F1D1D 0%, #991B1B 100%)",
+    bar: "rgba(255,255,255,0.3)", badgeBg: "rgba(255,255,255,0.12)", badgeBorder: "rgba(255,255,255,0.2)",
+  },
+  empty:  {
+    emoji: "📅", label: "Nema podataka", sub: "Unesite dnevne podatke da vidite status",
+    gradient: "linear-gradient(135deg, #1f2937 0%, #374151 100%)",
+    bar: "rgba(255,255,255,0.15)", badgeBg: "rgba(255,255,255,0.08)", badgeBorder: "rgba(255,255,255,0.12)",
+  },
 };
 
 export default function MonthAtAGlance() {
@@ -26,32 +42,45 @@ export default function MonthAtAGlance() {
 
   return (
     <div
-      className="rounded-xl mb-5"
-      style={{ background: status.bg, border: `1px solid ${status.border}`, overflow: "hidden" }}
+      className="rounded-xl mb-5 overflow-hidden"
+      style={{ background: status.gradient, boxShadow: "0 4px 16px rgba(0,0,0,0.15)" }}
     >
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-5">
         <div className="flex items-center gap-4">
-          <div style={{ fontSize: 34, lineHeight: 1 }}>{status.emoji}</div>
+          <div style={{ fontSize: 36, lineHeight: 1, filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.2))" }}>
+            {status.emoji}
+          </div>
           <div>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "#9ca3af", letterSpacing: "0.08em", textTransform: "uppercase", marginBottom: 3 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.5)", letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 3 }}>
               Pregled meseca &middot; {selectedPeriod}
             </div>
-            <div style={{ fontSize: 18, fontWeight: 800, color: "#111827", letterSpacing: "-0.01em" }}>
+            <div style={{ fontSize: 20, fontWeight: 800, color: "#ffffff", letterSpacing: "-0.02em", lineHeight: 1.1 }}>
               {status.label}
             </div>
-            <div style={{ fontSize: 12, color: "#6b7280", marginTop: 2 }}>{status.sub}</div>
+            <div style={{ fontSize: 12, color: "rgba(255,255,255,0.6)", marginTop: 3 }}>{status.sub}</div>
           </div>
         </div>
 
         {monthProgress && (
-          <div className="flex items-center gap-2" style={{ flexShrink: 0 }}>
-            <CalendarClock size={15} color="#9ca3af" />
-            <div style={{ fontSize: 12, color: "#374151" }}>
-              Dan <strong>{monthProgress.daysElapsed}</strong> od {monthProgress.daysInMonth}
-              <span style={{ color: "#9ca3af" }}> &middot; {monthProgress.daysRemaining} dana preostalo</span>
+          <div
+            className="flex flex-col gap-2 rounded-xl"
+            style={{
+              padding: "10px 16px", background: status.badgeBg,
+              border: `1px solid ${status.badgeBorder}`, flexShrink: 0, minWidth: 180,
+            }}
+          >
+            <div className="flex items-center gap-2">
+              <CalendarClock size={13} color="rgba(255,255,255,0.6)" />
+              <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)" }}>
+                Dan <strong style={{ color: "#fff" }}>{monthProgress.daysElapsed}</strong> od {monthProgress.daysInMonth}
+                &nbsp;&middot;&nbsp;<strong style={{ color: "#fff" }}>{monthProgress.daysRemaining}</strong> preostalo
+              </div>
             </div>
-            <div className="rounded-full overflow-hidden" style={{ width: 80, height: 5, background: "#e5e7eb" }}>
-              <div className="h-full rounded-full" style={{ width: `${monthProgress.percentElapsed}%`, background: "#C9A84C" }} />
+            <div className="rounded-full overflow-hidden" style={{ height: 6, background: "rgba(255,255,255,0.15)" }}>
+              <div className="h-full rounded-full" style={{ width: `${monthProgress.percentElapsed}%`, background: "rgba(255,255,255,0.55)", transition: "width 0.6s ease-out" }} />
+            </div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.45)", textAlign: "right" }}>
+              {monthProgress.percentElapsed}% meseca prošlo
             </div>
           </div>
         )}
@@ -60,8 +89,8 @@ export default function MonthAtAGlance() {
       {behindKpis.length > 0 && (
         <div className="px-5 pb-4">
           <div className="flex items-center gap-2 mb-2">
-            <AlertTriangle size={13} color="#dc2626" />
-            <span style={{ fontSize: 11, fontWeight: 700, color: "#991b1b", letterSpacing: "0.04em", textTransform: "uppercase" }}>
+            <AlertTriangle size={12} color="rgba(255,255,255,0.7)" />
+            <span style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.6)", letterSpacing: "0.08em", textTransform: "uppercase" }}>
               Zahteva pažnju
             </span>
           </div>
@@ -70,11 +99,10 @@ export default function MonthAtAGlance() {
               <div
                 key={kpi.label}
                 className="flex items-center gap-2 rounded-lg"
-                style={{ padding: "6px 10px", background: "#ffffff", border: "1px solid rgba(220,38,38,0.2)" }}
+                style={{ padding: "5px 10px", background: status.badgeBg, border: `1px solid ${status.badgeBorder}` }}
               >
-                <span style={{ fontSize: 12, fontWeight: 600, color: "#111827" }}>{kpi.label}</span>
-                <span style={{ fontSize: 11, color: "#dc2626", fontWeight: 600 }}>{kpi.achievement}% targeta</span>
-                <span style={{ fontSize: 11, color: "#9ca3af" }}>&middot; {kpi.remainingLabel}</span>
+                <span style={{ fontSize: 12, fontWeight: 600, color: "rgba(255,255,255,0.9)" }}>{kpi.label}</span>
+                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.55)", fontWeight: 500 }}>{kpi.achievement}% targeta</span>
               </div>
             ))}
           </div>

@@ -81,9 +81,9 @@ export default function DashboardPage() {
       {canEnterData && <MonthAtAGlance />}
 
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5">
-        {kpiData.map(kpi => {
+        {kpiData.map((kpi, i) => {
           const rowKey = ROW_DEFS.find(r => r.label === kpi.label)?.key ?? "";
-          return <KPICard key={kpi.label} data={kpi} icon={KPI_ICON_BY_ROW[rowKey]} />;
+          return <KPICard key={kpi.label} data={kpi} icon={KPI_ICON_BY_ROW[rowKey]} index={i} />;
         })}
       </div>
 

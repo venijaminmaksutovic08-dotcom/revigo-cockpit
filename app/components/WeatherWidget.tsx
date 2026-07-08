@@ -33,10 +33,7 @@ export default function WeatherWidget() {
       style={{ background: "#ffffff", border: "1px solid #e5e7eb", boxShadow: "0 1px 4px rgba(0,0,0,0.04)" }}
     >
       {/* Header */}
-      <div
-        className="flex items-center justify-between px-5 pt-4 pb-3"
-        style={{ borderBottom: "1px solid #f3f4f6" }}
-      >
+      <div className="flex items-center justify-between px-5 pt-4 pb-3" style={{ borderBottom: "1px solid #f3f4f6" }}>
         <div className="flex items-center gap-3">
           <div
             className="rounded-xl flex items-center justify-center"
@@ -46,9 +43,7 @@ export default function WeatherWidget() {
           </div>
           <div>
             <div style={{ fontSize: 14, fontWeight: 700, color: "#111827" }}>Vremenska Prognoza</div>
-            <div style={{ fontSize: 11, color: "#9ca3af" }}>
-              {locLabel ? `${locLabel} · ` : ""}7 dana
-            </div>
+            <div style={{ fontSize: 11, color: "#9ca3af" }}>{locLabel ? `${locLabel} · ` : ""}7 dana</div>
           </div>
         </div>
         <div style={{ fontSize: 11, color: "#9ca3af" }}>Open-Meteo</div>
@@ -82,18 +77,27 @@ export default function WeatherWidget() {
                   style={{
                     padding: "10px 4px",
                     borderRadius: 10,
-                    background: isToday ? "rgba(201,168,76,0.06)" : isBad ? "rgba(239,68,68,0.04)" : "transparent",
-                    border: isToday ? "1px solid rgba(201,168,76,0.2)" : "1px solid transparent",
+                    background: isToday
+                      ? "rgba(201,168,76,0.08)"
+                      : isBad
+                      ? "rgba(59,130,246,0.05)"
+                      : "transparent",
+                    border: isToday
+                      ? "1px solid rgba(201,168,76,0.25)"
+                      : isBad
+                      ? "1px solid rgba(59,130,246,0.12)"
+                      : "1px solid transparent",
                   }}
                 >
                   <div style={{ fontSize: 11, fontWeight: isToday ? 700 : 500, color: isToday ? "#C9A84C" : "#9ca3af", marginBottom: 4 }}>
                     {isToday ? "Danas" : day.dayLabel}
                   </div>
-                  <div style={{ fontSize: 22, lineHeight: 1, marginBottom: 4 }} title={label}>{emoji}</div>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: "#111827" }}>{day.tempMax}°</div>
-                  <div style={{ fontSize: 11, color: "#9ca3af" }}>{day.tempMin}°</div>
+                  <div style={{ fontSize: 24, lineHeight: 1, marginBottom: 5 }} title={label}>{emoji}</div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: "#111827", lineHeight: 1 }}>
+                    {day.tempMax}° / <span style={{ fontWeight: 400, color: "#9ca3af" }}>{day.tempMin}°</span>
+                  </div>
                   {day.precipitation > 0 && (
-                    <div style={{ fontSize: 10, marginTop: 3, fontWeight: day.precipitation > 5 ? 600 : 400, color: day.precipitation > 5 ? "#2563eb" : "#9ca3af" }}>
+                    <div style={{ fontSize: 10, marginTop: 3, fontWeight: day.precipitation > 5 ? 700 : 400, color: day.precipitation > 5 ? "#2563eb" : "#9ca3af" }}>
                       {day.precipitation}mm
                     </div>
                   )}

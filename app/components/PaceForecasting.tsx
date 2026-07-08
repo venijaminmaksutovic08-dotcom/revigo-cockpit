@@ -3,19 +3,17 @@
 import { TrendingUp } from "lucide-react";
 import { useHotel, type PaceForecastStatus } from "../context/HotelContext";
 
-const STATUS_CONFIG: Record<PaceForecastStatus, { emoji: string; label: string; color: string; bg: string }> = {
-  on_track: { emoji: "🟢", label: "On Track",  color: "#16a34a", bg: "rgba(34,197,94,0.08)" },
-  at_risk:  { emoji: "🟡", label: "At Risk",   color: "#ca8a04", bg: "rgba(234,179,8,0.08)" },
-  off_track:{ emoji: "🔴", label: "Off Track", color: "#dc2626", bg: "rgba(239,68,68,0.08)" },
-  no_target:{ emoji: "⚪", label: "No Target", color: "#9ca3af", bg: "#f9fafb" },
+const STATUS_CONFIG: Record<PaceForecastStatus, { emoji: string; label: string; color: string; bg: string; border: string }> = {
+  on_track:  { emoji: "🟢", label: "Na cilju",    color: "#16a34a", bg: "rgba(34,197,94,0.06)",  border: "rgba(34,197,94,0.2)" },
+  at_risk:   { emoji: "🟡", label: "Rizično",     color: "#d97706", bg: "rgba(245,158,11,0.06)", border: "rgba(245,158,11,0.2)" },
+  off_track: { emoji: "🔴", label: "Kasni",       color: "#dc2626", bg: "rgba(239,68,68,0.06)",  border: "rgba(239,68,68,0.2)" },
+  no_target: { emoji: "⚪", label: "Nema targeta", color: "#9ca3af", bg: "#f9fafb",              border: "#e5e7eb" },
 };
 
 export default function PaceForecasting() {
   const { paceForecast, selectedPeriod } = useHotel();
 
   if (!paceForecast) return null;
-
-  // Past month — silently hide
   if (!paceForecast.available && paceForecast.reason === "past_month") return null;
 
   return (
@@ -36,95 +34,94 @@ export default function PaceForecasting() {
         </div>
         {paceForecast.available && (
           <div style={{ fontSize: 11, color: "#9ca3af" }}>
-            Projekcija bazirana na trenutnom tempu &middot; {paceForecast.daysWithData} dana podataka
+            {paceForecast.daysWithData} dana podataka · {paceForecast.daysRemaining} preostalo
           </div>
         )}
       </div>
 
-      {/* Insufficient data state */}
+      {/* Insufficient data */}
       {!paceForecast.available && paceForecast.reason === "insufficient_data" && (
-        <div className="flex items-center justify-center px-5 py-8">
+        <div className="flex items-center justify-center px-5 py-10">
           <div className="text-center">
-            <div style={{ fontSize: 24, marginBottom: 8 }}>📊</div>
-            <div style={{ fontSize: 14, fontWeight: 600, color: "#374151", marginBottom: 4 }}>Nedovoljno podataka</div>
+            <div style={{ fontSize: 28, marginBottom: 8 }}>📊</div>
+            <div style={{ fontSize: 14, fontWeight: 700, color: "#374151", marginBottom: 4 }}>Nedovoljno podataka</div>
             <div style={{ fontSize: 12, color: "#9ca3af" }}>
               Potrebno je minimum 3 dana podataka za prognozu.
-              {paceForecast.daysWithData > 0 && ` Trenutno: ${paceForecast.daysWithData} dan${paceForecast.daysWithData === 1 ? "" : paceForecast.daysWithData < 5 ? "a" : "a"}.`}
+              {paceForecast.daysWithData > 0 && ` Trenutno: ${paceForecast.daysWithData} ${paceForecast.daysWithData === 1 ? "dan" : "dana"}.`}
             </div>
           </div>
         </div>
       )}
 
-      {/* Forecast table */}
+      {/* Card grid */}
       {paceForecast.available && (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ width: "100%", borderCollapse: "separate", borderSpacing: 0 }}>
-            <thead>
-              <tr>
-                {["Metrika", "MTD trenutno", "Projektovano EOM", "Target", "% Targeta", "Status"].map(h => (
-                  <th
-                    key={h}
-                    style={{
-                      textAlign: h === "Metrika" ? "left" : "right",
-                      fontSize: 10, fontWeight: 600, color: "#9ca3af",
-                      letterSpacing: "0.06em", textTransform: "uppercase",
-                      padding: "10px 16px 8px",
-                      borderBottom: "1px solid #f3f4f6",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {paceForecast.items.map((item, i) => {
-                const s = STATUS_CONFIG[item.status];
-                const isLast = i === paceForecast.items.length - 1;
-                return (
-                  <tr key={item.label} style={{ borderBottom: isLast ? "none" : "1px solid #f9fafb" }}>
-                    <td style={{ padding: "10px 16px", fontSize: 13, fontWeight: 600, color: "#111827", whiteSpace: "nowrap" }}>
+        <>
+          <div
+            className="grid gap-3 p-4"
+            style={{ gridTemplateColumns: `repeat(${Math.min(paceForecast.items.length, 2)}, 1fr)` }}
+          >
+            {paceForecast.items.map(item => {
+              const s = STATUS_CONFIG[item.status];
+              return (
+                <div
+                  key={item.label}
+                  className="rounded-xl flex flex-col"
+                  style={{
+                    padding: "16px 18px",
+                    background: s.bg,
+                    border: `1px solid ${s.border}`,
+                  }}
+                >
+                  {/* Label + badge */}
+                  <div className="flex items-center justify-between mb-3">
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.07em" }}>
                       {item.label}
-                    </td>
-                    <td style={{ padding: "10px 16px", fontSize: 13, color: "#374151", textAlign: "right" }}>
-                      {item.mtdFormatted}
-                    </td>
-                    <td style={{ padding: "10px 16px", fontSize: 13, fontWeight: 700, color: item.status === "no_target" ? "#374151" : s.color, textAlign: "right" }}>
-                      {item.projectedFormatted}
-                    </td>
-                    <td style={{ padding: "10px 16px", fontSize: 13, color: "#6b7280", textAlign: "right" }}>
-                      {item.targetFormatted}
-                    </td>
-                    <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                      {item.status === "no_target" ? (
-                        <span style={{ fontSize: 12, color: "#9ca3af" }}>—</span>
-                      ) : (
-                        <span style={{ fontSize: 13, fontWeight: 700, color: s.color }}>{item.projectedPct}%</span>
-                      )}
-                    </td>
-                    <td style={{ padding: "10px 16px", textAlign: "right" }}>
-                      <span
-                        className="inline-flex items-center gap-1 rounded-md"
-                        style={{ height: 20, padding: "0 7px", background: s.bg, fontSize: 11, fontWeight: 600, color: s.color, whiteSpace: "nowrap" }}
-                      >
-                        {s.emoji} {s.label}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </div>
+                    <span
+                      className="rounded-full flex items-center gap-1"
+                      style={{ height: 20, padding: "0 8px", background: s.bg, border: `1px solid ${s.border}`, fontSize: 10, fontWeight: 700, color: s.color }}
+                    >
+                      {s.emoji} {s.label}
+                    </span>
+                  </div>
 
-          {/* Footer note */}
-          <div className="px-5 pb-3 pt-1" style={{ borderTop: "1px solid #f9fafb" }}>
+                  {/* Projected value — large */}
+                  <div style={{ fontSize: 24, fontWeight: 800, color: item.status === "no_target" ? "#374151" : s.color, letterSpacing: "-0.03em", lineHeight: 1, marginBottom: 10 }}>
+                    {item.projectedFormatted}
+                  </div>
+
+                  {/* Stats row */}
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div>
+                      <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>MTD</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{item.mtdFormatted}</div>
+                    </div>
+                    <div style={{ width: 1, height: 24, background: "#e5e7eb" }} />
+                    <div>
+                      <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>Target</div>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{item.targetFormatted}</div>
+                    </div>
+                    {item.status !== "no_target" && (
+                      <>
+                        <div style={{ width: 1, height: 24, background: "#e5e7eb" }} />
+                        <div>
+                          <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>% Targeta</div>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: s.color }}>{item.projectedPct}%</div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="px-5 pb-3 pt-1" style={{ borderTop: "1px solid #f3f4f6" }}>
             <span style={{ fontSize: 11, color: "#9ca3af" }}>
-              🟢 On Track ≥95% &nbsp;&middot;&nbsp; 🟡 At Risk 80–95% &nbsp;&middot;&nbsp; 🔴 Off Track &lt;80% &nbsp;&middot;&nbsp;
-              {paceForecast.daysRemaining} dana preostalo u mesecu
+              🟢 Na cilju ≥95% &nbsp;·&nbsp; 🟡 Rizično 80–95% &nbsp;·&nbsp; 🔴 Kasni &lt;80%
             </span>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
