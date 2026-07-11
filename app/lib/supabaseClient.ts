@@ -25,6 +25,19 @@ export interface DailyReportRow {
   created_at: string;
 }
 
+export interface OnBooksSnapshotRow {
+  id: string;
+  hotel_id: string;
+  snapshot_date: string;
+  stay_month: number;
+  stay_year: number;
+  rooms_onbooks: number;
+  revenue_onbooks: number;
+  occupancy_onbooks: number;
+  notes: string | null;
+  created_at: string;
+}
+
 export interface MonthlyTargetRow {
   id: string;
   hotel_id: string;

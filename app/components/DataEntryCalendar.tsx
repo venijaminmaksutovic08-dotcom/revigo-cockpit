@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { CalendarDays } from "lucide-react";
 import DataEntryModal from "./DataEntryModal";
 import DateActionModal from "./DateActionModal";
@@ -13,6 +13,7 @@ import {
   type DayStatus,
 } from "../context/HotelContext";
 import type { ParsedReportRow } from "../lib/reportImport";
+import { fetchOnBooksForDate, saveOnBooksForDate, emptyOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
 
 const WEEKDAYS_SR = ["Pon", "Uto", "Sre", "Čet", "Pet", "Sub", "Ned"];
 
@@ -42,6 +43,7 @@ const TODAY = new Date();
 
 export default function DataEntryCalendar() {
   const {
+    selectedHotel,
     selectedHotelName,
     monthInfo,
     getEntryForDate,
@@ -51,6 +53,18 @@ export default function DataEntryCalendar() {
 
   const [openDay, setOpenDay] = useState<number | null>(null);
   const [mode, setMode]       = useState<ModalMode>(null);
+  const [onBooksData, setOnBooksData] = useState<OnBooksMonthInput[] | null>(null);
+
+  const openDate = openDay !== null && monthInfo ? dateToISO(monthInfo.year, monthInfo.month, openDay) : null;
+
+  // Load the on-books snapshot for the date being edited whenever the manual entry modal opens.
+  useEffect(() => {
+    if (mode !== "manual" || !openDate || !selectedHotel) return;
+    let cancelled = false;
+    setOnBooksData(emptyOnBooksMonths(openDate));
+    fetchOnBooksForDate(selectedHotel, openDate).then(data => { if (!cancelled) setOnBooksData(data); });
+    return () => { cancelled = true; };
+  }, [mode, openDate, selectedHotel]);
 
   if (!monthInfo) return null;
 
@@ -59,7 +73,6 @@ export default function DataEntryCalendar() {
   const leadingBlanks = Array.from({ length: firstWeekday });
   const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
 
-  const openDate    = openDay !== null ? dateToISO(year, month, openDay)   : null;
   const openEntry   = openDate          ? getEntryForDate(openDate)         : null;
   const dateLabel   = openDay !== null  ? formatDateLabel(year, month, openDay) : "";
   const hasExisting = openEntry !== null;
@@ -72,6 +85,7 @@ export default function DataEntryCalendar() {
   function closeAll() {
     setOpenDay(null);
     setMode(null);
+    setOnBooksData(null);
   }
 
   return (
@@ -211,13 +225,15 @@ export default function DataEntryCalendar() {
       )}
 
       {/* ── Manual entry modal ─────────────────────────────────────────────── */}
-      {mode === "manual" && openDay !== null && openDate && (
+      {mode === "manual" && openDay !== null && openDate && onBooksData && (
         <DataEntryModal
           hotel={selectedHotelName}
           dateLabel={dateLabel}
           initialData={openEntry ?? emptyEntryData()}
-          onSave={async data => {
+          initialOnBooks={onBooksData}
+          onSave={async (data, onBooks) => {
             await saveEntryForDate(openDate, data);
+            if (selectedHotel) await saveOnBooksForDate(selectedHotel, openDate, onBooks);
             closeAll();
           }}
           onClose={closeAll}

@@ -139,7 +139,7 @@ function entryDataToDbColumns(data: EntryData) {
   return columns;
 }
 
-function dbRowToEntryData(row: DailyReportRow): EntryData {
+export function dbRowToEntryData(row: DailyReportRow): EntryData {
   const data = emptyEntryData();
   for (const rowDef of ROW_DEFS) {
     for (const col of COLUMN_DEFS) {
@@ -151,17 +151,24 @@ function dbRowToEntryData(row: DailyReportRow): EntryData {
   return data;
 }
 
-function formatNumber(n: number, rowDef: RowDef): string {
+export function formatNumber(n: number, rowDef: RowDef): string {
   const rounded = rowDef.unit === "%" ? Math.round(n * 10) / 10 : Math.round(n);
   return `${rowDef.prefix ?? ""}${rounded.toLocaleString("sr-RS")}${rowDef.unit ?? ""}`;
 }
 
 // Ahead: pacing to beat the monthly target. On Pace: within striking distance (85-100%). Behind: needs attention.
-function statusFor(achievement: number, hasTarget: boolean, valueIsEmpty: boolean): KPIStatus {
+export function statusFor(achievement: number, hasTarget: boolean, valueIsEmpty: boolean): KPIStatus {
   if (valueIsEmpty || !hasTarget) return "empty";
   if (achievement >= 100) return "ahead";
   if (achievement >= 85) return "onpace";
   return "behind";
+}
+
+// Additive metrics (Revenue, Room Nights) accumulate across days, so their daily target pace is
+// monthly target / days in month. Rate metrics (ADR, Occupancy, RevPAR) don't accumulate — the
+// monthly target rate IS the daily target rate.
+export function isAdditiveRow(key: RowKey): boolean {
+  return key === "brojNocenja" || key === "ukupanPrihod";
 }
 
 export interface MonthProgress {
@@ -255,7 +262,7 @@ export type PaceForecastResult =
   | { available: true; items: PaceForecastItem[]; daysWithData: number; daysRemaining: number; daysInMonth: number }
   | { available: false; reason: "past_month" | "insufficient_data"; daysWithData: number };
 
-const ROW_TARGET_FIELD: Record<RowKey, keyof Pick<MonthlyTargetRow, "revenue_target" | "room_nights_target" | "adr_target" | "occupancy_target" | "revpar_target">> = {
+export const ROW_TARGET_FIELD: Record<RowKey, keyof Pick<MonthlyTargetRow, "revenue_target" | "room_nights_target" | "adr_target" | "occupancy_target" | "revpar_target">> = {
   brojNocenja: "room_nights_target",
   ukupanPrihod: "revenue_target",
   adr: "adr_target",

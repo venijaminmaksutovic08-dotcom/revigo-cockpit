@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   CalendarRange, DollarSign, Percent, Receipt, TrendingUp, Download,
 } from "lucide-react";
@@ -16,6 +16,7 @@ import DateActionModal from "../components/DateActionModal";
 import DataEntryModal from "../components/DataEntryModal";
 import ImportReportModal from "../components/ImportReportModal";
 import type { ParsedReportRow } from "../lib/reportImport";
+import { fetchOnBooksForDate, saveOnBooksForDate, emptyOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -167,6 +168,18 @@ export default function MesecniPage() {
 
   const [openDay, setOpenDay] = useState<number | null>(null);
   const [mode, setMode] = useState<ModalMode>(null);
+  const [onBooksData, setOnBooksData] = useState<OnBooksMonthInput[] | null>(null);
+
+  const openDate = openDay !== null && monthInfo ? dateToISO(monthInfo.year, monthInfo.month, openDay) : null;
+
+  // Load the on-books snapshot for the date being edited whenever the manual entry modal opens.
+  useEffect(() => {
+    if (mode !== "manual" || !openDate || !selectedHotel) return;
+    let cancelled = false;
+    setOnBooksData(emptyOnBooksMonths(openDate));
+    fetchOnBooksForDate(selectedHotel, openDate).then(data => { if (!cancelled) setOnBooksData(data); });
+    return () => { cancelled = true; };
+  }, [mode, openDate, selectedHotel]);
 
   const dayRows = useMemo<DayRow[]>(() => {
     if (!monthInfo) return [];
@@ -227,7 +240,6 @@ export default function MesecniPage() {
   }, [kpiData]);
 
   // ── Modal wiring — identical pattern to DataEntryCalendar ───────────────────
-  const openDate = openDay !== null && monthInfo ? dateToISO(monthInfo.year, monthInfo.month, openDay) : null;
   const openEntry = openDate ? getEntryForDate(openDate) : null;
   const dateLabel = openDay !== null && monthInfo ? formatDateLabel(monthInfo.year, monthInfo.month, openDay) : "";
   const hasExisting = openEntry !== null;
@@ -240,6 +252,7 @@ export default function MesecniPage() {
   function closeAll() {
     setOpenDay(null);
     setMode(null);
+    setOnBooksData(null);
   }
 
   // ── Export ────────────────────────────────────────────────────────────────
@@ -465,13 +478,15 @@ export default function MesecniPage() {
       )}
 
       {/* ── Manual entry modal ─────────────────────────────────────────────── */}
-      {mode === "manual" && openDay !== null && openDate && (
+      {mode === "manual" && openDay !== null && openDate && onBooksData && (
         <DataEntryModal
           hotel={selectedHotelName}
           dateLabel={dateLabel}
           initialData={openEntry ?? emptyEntryData()}
-          onSave={async data => {
+          initialOnBooks={onBooksData}
+          onSave={async (data, onBooks) => {
             await saveEntryForDate(openDate, data);
+            if (selectedHotel) await saveOnBooksForDate(selectedHotel, openDate, onBooks);
             closeAll();
           }}
           onClose={closeAll}

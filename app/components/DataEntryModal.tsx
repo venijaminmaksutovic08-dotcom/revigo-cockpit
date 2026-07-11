@@ -1,20 +1,23 @@
 "use client";
 
 import { useState } from "react";
-import { X, ClipboardList } from "lucide-react";
+import { X, ClipboardList, BookMarked } from "lucide-react";
 import {
   ROW_DEFS,
   COLUMN_DEFS,
+  MONTHS_SR,
   type EntryData,
   type RowKey,
   type ColumnKey,
 } from "../context/HotelContext";
+import type { OnBooksMonthInput } from "../lib/dashboardData";
 
 interface DataEntryModalProps {
   hotel: string;
   dateLabel: string;
   initialData: EntryData;
-  onSave: (data: EntryData) => Promise<void>;
+  initialOnBooks: OnBooksMonthInput[];
+  onSave: (data: EntryData, onBooks: OnBooksMonthInput[]) => Promise<void>;
   onClose: () => void;
 }
 
@@ -66,8 +69,9 @@ function computeDerived(values: EntryData[RowKey]) {
   return { pickup, gap, ostvarenost };
 }
 
-export default function DataEntryModal({ hotel, dateLabel, initialData, onSave, onClose }: DataEntryModalProps) {
+export default function DataEntryModal({ hotel, dateLabel, initialData, initialOnBooks, onSave, onClose }: DataEntryModalProps) {
   const [data, setData] = useState<EntryData>(() => cloneEntry(initialData));
+  const [onBooks, setOnBooks] = useState<OnBooksMonthInput[]>(() => initialOnBooks.map(e => ({ ...e })));
   const [saving, setSaving] = useState(false);
 
   function setCell(rowKey: RowKey, columnKey: ColumnKey, value: number) {
@@ -77,9 +81,13 @@ export default function DataEntryModal({ hotel, dateLabel, initialData, onSave, 
     }));
   }
 
+  function setOnBooksField(index: number, field: keyof Omit<OnBooksMonthInput, "stayMonth" | "stayYear">, value: number) {
+    setOnBooks(prev => prev.map((e, i) => (i === index ? { ...e, [field]: value } : e)));
+  }
+
   async function handleSave() {
     setSaving(true);
-    await onSave(data);
+    await onSave(data, onBooks);
     setSaving(false);
   }
 
@@ -188,6 +196,46 @@ export default function DataEntryModal({ hotel, dateLabel, initialData, onSave, 
               })}
             </tbody>
           </table>
+
+          {/* Section 2 — On-Books snapshot for future months */}
+          <div style={{ marginTop: 24, paddingTop: 20, borderTop: "1px solid #f3f4f6" }}>
+            <div className="flex items-center gap-2 mb-1">
+              <BookMarked size={15} color="#C9A84C" />
+              <span style={{ fontSize: 13, fontWeight: 700, color: "#111827" }}>
+                Stanje rezervacija na dan {dateLabel}
+              </span>
+            </div>
+            <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 14 }}>
+              ovo se menja svaki dan
+            </div>
+            <div className="flex flex-col md:flex-row gap-3">
+              {onBooks.map((entry, i) => (
+                <div
+                  key={`${entry.stayYear}-${entry.stayMonth}`}
+                  className="flex-1"
+                  style={{ border: "1px solid #e5e7eb", borderRadius: 10, padding: 14, minWidth: 0 }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 10 }}>
+                    {MONTHS_SR[entry.stayMonth - 1]} {entry.stayYear}
+                  </div>
+                  <div className="flex flex-col gap-2.5">
+                    <div>
+                      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>Rezervisana noćenja</div>
+                      <NumberCell value={entry.roomsOnbooks} onChange={v => setOnBooksField(i, "roomsOnbooks", v)} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>On-books prihod</div>
+                      <NumberCell value={entry.revenueOnbooks} onChange={v => setOnBooksField(i, "revenueOnbooks", v)} />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>On-books popunjenost %</div>
+                      <NumberCell value={entry.occupancyOnbooks} onChange={v => setOnBooksField(i, "occupancyOnbooks", v)} />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
         </div>
 
         {/* Footer */}
