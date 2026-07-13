@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target, FileSpreadsheet, History } from "lucide-react";
+import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target, FileSpreadsheet } from "lucide-react";
 import KPICard from "./components/KPICard";
 import PriceTable from "./components/PriceTable";
 import RightPanel from "./components/RightPanel";
@@ -18,12 +18,12 @@ import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
 import ImportReportModal from "./components/ImportReportModal";
 import LastYearOnBooksModal from "./components/LastYearOnBooksModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
-import { useHotel, MONTHS_SR } from "./context/HotelContext";
+import { useHotel, MONTHS_SR, ROW_DEFS } from "./context/HotelContext";
 import type { ParsedReportRow } from "./lib/reportImport";
 import {
   todayISO, shiftYears, yearMonthOf, daysInMonthOf, dateParts, toISO, formatDateSr,
   fetchLatestReportDate, fetchDayReport, fetchMonthlyTargetFor, fetchPeriodAggregate,
-  getOnBooksStayMonths, buildDualKpiData, type PeriodAggregate,
+  getOnBooksStayMonths, buildDayKpiData, buildDualKpiData, type PeriodAggregate,
 } from "./lib/dashboardData";
 import type { DailyReportRow, MonthlyTargetRow } from "./lib/supabaseClient";
 
@@ -133,6 +133,11 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [selectedHotel, mode, selectedDate]);
 
+  const dayKpiData = mode === "day"
+    ? buildDayKpiData(dayRow, dayLastYearRow, dayMonthlyTarget)
+    : [];
+
+  // Kept solely for Pace Forecasting below — the KPI cards use the simpler dayKpiData above.
   const dualKpiData = mode === "day"
     ? buildDualKpiData(dayRow, dayLastYearRow, dayMonthlyTarget, mtdAgg, daysInMonthOf(selectedDate))
     : [];
@@ -170,40 +175,23 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {selectedHotel && (
+        {canEnterData && (
           <div className="flex items-center gap-2 flex-wrap">
-            {canEnterData && (
-              <>
-                <button
-                  onClick={() => setShowImportModal(true)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    height: 38, paddingLeft: 16, paddingRight: 16,
-                    borderRadius: 8, border: "1px solid #e5e7eb",
-                    background: "#f9fafb",
-                    color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                  }}
-                >
-                  <FileSpreadsheet size={15} />
-                  Uvezi izveštaj
-                </button>
-                <button
-                  onClick={() => setShowTargetsModal(true)}
-                  style={{
-                    display: "flex", alignItems: "center", gap: 8,
-                    height: 38, paddingLeft: 16, paddingRight: 16,
-                    borderRadius: 8, border: "1px solid rgba(201,168,76,0.3)",
-                    background: "rgba(201,168,76,0.06)",
-                    color: "#C9A84C", fontSize: 13, fontWeight: 600, cursor: "pointer",
-                  }}
-                >
-                  <Target size={15} />
-                  Postavi mesečne targete
-                </button>
-              </>
-            )}
             <button
-              onClick={() => setShowLastYearModal(true)}
+              onClick={() => setShowImportModal(true)}
+              style={{
+                display: "flex", alignItems: "center", gap: 8,
+                height: 38, paddingLeft: 16, paddingRight: 16,
+                borderRadius: 8, border: "1px solid #e5e7eb",
+                background: "#f9fafb",
+                color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer",
+              }}
+            >
+              <FileSpreadsheet size={15} />
+              Uvezi izveštaj
+            </button>
+            <button
+              onClick={() => setShowTargetsModal(true)}
               style={{
                 display: "flex", alignItems: "center", gap: 8,
                 height: 38, paddingLeft: 16, paddingRight: 16,
@@ -212,8 +200,8 @@ export default function DashboardPage() {
                 color: "#C9A84C", fontSize: 13, fontWeight: 600, cursor: "pointer",
               }}
             >
-              <History size={15} />
-              Unesi podatke prošle godine
+              <Target size={15} />
+              Postavi mesečne targete
             </button>
           </div>
         )}
@@ -231,6 +219,22 @@ export default function DashboardPage() {
         />
       )}
 
+      {selectedHotel && (
+        <button
+          onClick={() => setShowLastYearModal(true)}
+          className="flex items-center justify-center gap-2 w-full"
+          style={{
+            height: 44, marginBottom: 20, borderRadius: 10,
+            border: "1px solid rgba(201,168,76,0.4)",
+            background: "linear-gradient(135deg, #C9A84C 0%, #E8C96B 100%)",
+            color: "#ffffff", fontSize: 13.5, fontWeight: 700, cursor: "pointer",
+            boxShadow: "0 2px 10px rgba(201,168,76,0.35)",
+          }}
+        >
+          📅 Unesi podatke prošle godine
+        </button>
+      )}
+
       {/* Actuals — snapshot for the selected date, or sum/average across the selected period */}
       {selectedHotel && mode === "day" && (
         <>
@@ -238,9 +242,10 @@ export default function DashboardPage() {
             Actuals — {formatDateSr(selectedDate)}
           </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5" style={{ opacity: dayLoading ? 0.6 : 1, transition: "opacity 0.15s" }}>
-            {dualKpiData.map((kpi, i) => (
-              <KPICard key={kpi.key} data={kpi} icon={KPI_ICON_BY_ROW[kpi.key]} index={i} />
-            ))}
+            {dayKpiData.map((kpi, i) => {
+              const rowKey = ROW_DEFS.find(r => r.label === kpi.label)?.key ?? "";
+              return <KPICard key={kpi.label} data={kpi} icon={KPI_ICON_BY_ROW[rowKey]} index={i} />;
+            })}
           </div>
         </>
       )}

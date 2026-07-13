@@ -9,7 +9,7 @@ import {
   isAdditiveRow,
   type RowKey,
 } from "../context/HotelContext";
-import type { KPIStatus } from "../data/hotelData";
+import type { KPIData, KPIStatus } from "../data/hotelData";
 
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
@@ -103,11 +103,68 @@ export async function fetchMonthlyTargetFor(hotelId: string, yearMonth: string):
   return data ?? null;
 }
 
+// Builds simple KPICard-ready data: the exact entered value for one date (already an on-books
+// total for the target period, e.g. room nights on the books for the whole month as of that day)
+// compared directly against the full monthly target — never divided by days in month, since the
+// value itself isn't a single day's production. YoY compares against the same calendar date one
+// year prior (falling back to the entry's own manually-entered "same day last year" field).
+export function buildDayKpiData(
+  row: DailyReportRow | null,
+  lastYearRow: DailyReportRow | null,
+  monthlyTarget: MonthlyTargetRow | null,
+): KPIData[] {
+  const entry = row ? dbRowToEntryData(row) : null;
+  const lastYearEntry = lastYearRow ? dbRowToEntryData(lastYearRow) : null;
+  const hasEntry = Boolean(entry);
+  const hasTarget = Boolean(monthlyTarget);
+
+  return ROW_DEFS.map(rowDef => {
+    const value = entry ? entry[rowDef.key].naKnjigamaDanas : 0;
+    const target = monthlyTarget ? monthlyTarget[ROW_TARGET_FIELD[rowDef.key]] : 0;
+
+    const lastYear = lastYearEntry
+      ? lastYearEntry[rowDef.key].naKnjigamaDanas
+      : entry
+        ? entry[rowDef.key].istiDanProsleGodine
+        : 0;
+
+    const gap = value - target;
+    const achievement = hasTarget && target !== 0 ? Math.round((value / target) * 1000) / 10 : 0;
+    const remaining = target - value;
+    const yoyChangePct = hasEntry && lastYear !== 0 ? Math.round(((value - lastYear) / lastYear) * 1000) / 10 : null;
+
+    let remainingLabel = "—";
+    if (hasEntry && hasTarget) {
+      remainingLabel = remaining > 0
+        ? `${formatNumber(remaining, rowDef)} preostalo`
+        : `${formatNumber(Math.abs(remaining), rowDef)} iznad targeta`;
+    }
+
+    return {
+      label: rowDef.label,
+      value: hasEntry ? formatNumber(value, rowDef) : "—",
+      rawValue: value,
+      target: hasTarget ? formatNumber(target, rowDef) : "—",
+      rawTarget: target,
+      gap: hasEntry && hasTarget ? `${gap >= 0 ? "+" : ""}${formatNumber(gap, rowDef)}` : "—",
+      achievement: hasEntry ? achievement : 0,
+      unit: rowDef.unit,
+      prefix: rowDef.prefix,
+      status: statusFor(achievement, hasTarget, !hasEntry),
+      remainingLabel,
+      lastYearValue: lastYear,
+      lastYearLabel: hasEntry ? formatNumber(lastYear, rowDef) : "—",
+      yoyChangePct,
+    };
+  });
+}
+
 // KPICard-ready data combining two comparisons for a single selected date:
 //  - Daily: the exact entered value for that date vs. the monthly target's daily pace
 //    (monthly target / days in month for additive rows; the rate target itself for rate rows).
 //  - Monthly: the month-to-date sum/average (through the selected date, inclusive) vs. the full
 //    monthly target, plus a pace projection to end-of-month.
+// Kept for Pace Forecasting only — the KPI cards themselves use the simpler buildDayKpiData above.
 export interface DualKpiData {
   key: RowKey;
   label: string;
