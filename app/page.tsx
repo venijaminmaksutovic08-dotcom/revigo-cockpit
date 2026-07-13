@@ -15,11 +15,10 @@ import WeatherWidget from "./components/WeatherWidget";
 import EventsWidget from "./components/EventsWidget";
 import CompetitorPrices from "./components/CompetitorPrices";
 import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
-import ImportReportModal from "./components/ImportReportModal";
+import ExcelImportModal from "./components/ExcelImportModal";
 import LastYearOnBooksModal from "./components/LastYearOnBooksModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
 import { useHotel, MONTHS_SR, ROW_DEFS } from "./context/HotelContext";
-import type { ParsedReportRow } from "./lib/reportImport";
 import {
   todayISO, shiftYears, yearMonthOf, daysInMonthOf, dateParts, toISO, formatDateSr,
   fetchLatestReportDate, fetchDayReport, fetchMonthlyTargetFor, fetchPeriodAggregate, fetchPaceActuals,
@@ -76,7 +75,7 @@ function PeriodStatCard({ rowKey, value }: { rowKey: string; value: number }) {
 }
 
 export default function DashboardPage() {
-  const { selectedHotel, selectedHotelName, selectedPeriod, monthlyTarget, saveMonthlyTargets, saveEntryForDate } = useHotel();
+  const { selectedHotel, selectedHotelName, selectedPeriod, monthlyTarget, saveMonthlyTargets } = useHotel();
   const canEnterData = Boolean(selectedHotel && selectedPeriod);
   const [showTargetsModal, setShowTargetsModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
@@ -133,7 +132,7 @@ export default function DashboardPage() {
       setDayLoading(false);
     });
     return () => { cancelled = true; };
-  }, [selectedHotel, mode, selectedDate]);
+  }, [selectedHotel, mode, selectedDate, onBooksRefreshKey]);
 
   const dayKpiData = mode === "day"
     ? buildDayKpiData(dayRow, dayLastYearRow, dayMonthlyTarget)
@@ -274,6 +273,7 @@ export default function DashboardPage() {
           month={logMonth.month}
           selectedDate={selectedDate}
           onSelectDate={d => { setSelectedDate(d); setMode("day"); }}
+          refreshKey={onBooksRefreshKey}
         />
       )}
 
@@ -311,15 +311,11 @@ export default function DashboardPage() {
         />
       )}
 
-      {showImportModal && (
-        <ImportReportModal
-          hotel={selectedHotelName}
-          onConfirm={async (rows: ParsedReportRow[]) => {
-            for (const row of rows) {
-              await saveEntryForDate(row.dateISO, row.data);
-            }
-            setShowImportModal(false);
-          }}
+      {showImportModal && selectedHotel && (
+        <ExcelImportModal
+          hotelId={selectedHotel}
+          hotelName={selectedHotelName}
+          onImported={() => setOnBooksRefreshKey(k => k + 1)}
           onClose={() => setShowImportModal(false)}
         />
       )}

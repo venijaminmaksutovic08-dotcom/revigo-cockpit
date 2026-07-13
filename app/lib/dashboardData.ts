@@ -10,6 +10,7 @@ import {
   type RowKey,
 } from "../context/HotelContext";
 import type { KPIData, KPIStatus } from "../data/hotelData";
+import type { ParsedMonthMetrics } from "./dailyReportExcelImport";
 
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
@@ -474,6 +475,107 @@ export async function fetchOnBooksLastYear(
     .maybeSingle();
   if (error) { console.error("Failed to load on-books last-year comparison:", error.message); return null; }
   return data ?? null;
+}
+
+// ── Excel report import (wide "Daily report" pace-report layout) ────────────────
+
+function normalizePercent(n: number): number {
+  // The file may store occupancy as a decimal fraction (0.55) or already as a percent (55).
+  return n !== 0 && Math.abs(n) <= 1 ? n * 100 : n;
+}
+
+// Months after the current calendar month are still open — their figures are forward demand, not
+// a finished result, so they're saved as on-books snapshots rather than daily_reports actuals.
+export async function importOnBooksMonths(hotelId: string, months: ParsedMonthMetrics[]): Promise<number> {
+  const { year, month: currentMonth } = dateParts(todayISO());
+  const futureMonths = months.filter(m => m.monthNumber > currentMonth);
+  if (futureMonths.length === 0) return 0;
+
+  const entries: OnBooksMonthInput[] = futureMonths.map(m => ({
+    stayMonth: m.monthNumber,
+    stayYear: year,
+    roomsOnbooks: m.roomNights.today,
+    revenueOnbooks: m.revenue.today,
+    occupancyOnbooks: normalizePercent(m.occupancy.today),
+  }));
+  await saveOnBooksForDate(hotelId, todayISO(), entries);
+  return futureMonths.length;
+}
+
+// Months up to and including the current one are actuals: one daily_reports summary row per
+// month (dated the month's last day), plus a monthly_targets row if one doesn't already exist —
+// an existing manually-set target is never overwritten by the import.
+export async function importActualsMonths(hotelId: string, months: ParsedMonthMetrics[]): Promise<number> {
+  const { year, month: currentMonth } = dateParts(todayISO());
+  const pastMonths = months.filter(m => m.monthNumber <= currentMonth);
+  if (pastMonths.length === 0) return 0;
+
+  for (const m of pastMonths) {
+    const monthStart = toISO(year, m.monthNumber, 1);
+    const reportDate = toISO(year, m.monthNumber, daysInMonthOf(monthStart));
+
+    const payload = {
+      hotel_id: hotelId,
+      report_date: reportDate,
+      last_year: {
+        brojNocenja: m.roomNights.totalLastYear,
+        ukupanPrihod: m.revenue.totalLastYear,
+        adr: m.adr.totalLastYear,
+        popunjenost: normalizePercent(m.occupancy.totalLastYear),
+        revpar: m.revpar.totalLastYear,
+      },
+      same_day_last_year: {
+        brojNocenja: m.roomNights.sameDayLastYear,
+        ukupanPrihod: m.revenue.sameDayLastYear,
+        adr: m.adr.sameDayLastYear,
+        popunjenost: normalizePercent(m.occupancy.sameDayLastYear),
+        revpar: m.revpar.sameDayLastYear,
+      },
+      on_books_yesterday: { brojNocenja: 0, ukupanPrihod: 0, adr: 0, popunjenost: 0, revpar: 0 },
+      on_books_today: {
+        brojNocenja: m.roomNights.today,
+        ukupanPrihod: m.revenue.today,
+        adr: m.adr.today,
+        popunjenost: normalizePercent(m.occupancy.today),
+        revpar: m.revpar.today,
+      },
+      target: {
+        brojNocenja: m.roomNights.target,
+        ukupanPrihod: m.revenue.target,
+        adr: m.adr.target,
+        popunjenost: normalizePercent(m.occupancy.target),
+        revpar: m.revpar.target,
+      },
+    };
+
+    const { error } = await supabase
+      .from("daily_reports")
+      .upsert(payload, { onConflict: "hotel_id,report_date" });
+    if (error) console.error("Failed to import monthly actuals:", error.message);
+
+    const yearMonth = yearMonthOf(reportDate);
+    const { data: existingTarget } = await supabase
+      .from("monthly_targets")
+      .select("id")
+      .eq("hotel_id", hotelId)
+      .eq("year_month", yearMonth)
+      .maybeSingle();
+
+    if (!existingTarget) {
+      const { error: targetError } = await supabase.from("monthly_targets").insert({
+        hotel_id: hotelId,
+        year_month: yearMonth,
+        revenue_target: m.revenue.target,
+        room_nights_target: m.roomNights.target,
+        adr_target: m.adr.target,
+        occupancy_target: normalizePercent(m.occupancy.target),
+        revpar_target: m.revpar.target,
+      });
+      if (targetError) console.error("Failed to save monthly target from import:", targetError.message);
+    }
+  }
+
+  return pastMonths.length;
 }
 
 export type { RowKey };

@@ -10,9 +10,10 @@ interface ReportLogProps {
   month: number;
   selectedDate: string;
   onSelectDate: (dateISO: string) => void;
+  refreshKey?: number;
 }
 
-export default function ReportLog({ hotelId, year, month, selectedDate, onSelectDate }: ReportLogProps) {
+export default function ReportLog({ hotelId, year, month, selectedDate, onSelectDate, refreshKey }: ReportLogProps) {
   const [entries, setEntries] = useState<ReportLogEntry[] | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -21,7 +22,7 @@ export default function ReportLog({ hotelId, year, month, selectedDate, onSelect
     let cancelled = false;
     fetchReportLog(hotelId, year, month).then(data => { if (!cancelled) setEntries(data); });
     return () => { cancelled = true; };
-  }, [hotelId, year, month]);
+  }, [hotelId, year, month, refreshKey]);
 
   const daysInMonth = new Date(year, month, 0).getDate();
   const byDate = useMemo(() => {
