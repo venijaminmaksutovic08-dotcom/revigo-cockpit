@@ -2,6 +2,7 @@
 
 import { TrendingUp } from "lucide-react";
 import type { DualKpiData } from "../lib/dashboardData";
+import { isAdditiveRow } from "../context/HotelContext";
 import type { KPIStatus } from "../data/hotelData";
 
 const STATUS_CONFIG: Record<KPIStatus, { emoji: string; label: string; color: string; bg: string; border: string }> = {
@@ -69,6 +70,7 @@ export default function PaceForecasting({ data, daysWithData, daysInMonth, daysR
           <div className="grid gap-3 p-4" style={{ gridTemplateColumns: `repeat(${Math.min(data.length, 3)}, 1fr)` }}>
             {data.map(item => {
               const s = STATUS_CONFIG[item.hasMonthlyTarget ? item.monthlyStatus : "empty"];
+              const additive = isAdditiveRow(item.key);
               return (
                 <div
                   key={item.label}
@@ -87,16 +89,14 @@ export default function PaceForecasting({ data, daysWithData, daysInMonth, daysR
                     </span>
                   </div>
 
+                  <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 2 }}>
+                    {additive ? "On-Books stanje" : "Trenutni prosek"}
+                  </div>
                   <div style={{ fontSize: 24, fontWeight: 800, color: item.hasMonthlyTarget ? s.color : "#374151", letterSpacing: "-0.03em", lineHeight: 1, marginBottom: 10 }}>
-                    {item.projectedFormatted}
+                    {item.mtdValueFormatted}
                   </div>
 
                   <div className="flex items-center gap-3 flex-wrap">
-                    <div>
-                      <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>MTD</div>
-                      <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{item.mtdValueFormatted}</div>
-                    </div>
-                    <div style={{ width: 1, height: 24, background: "#e5e7eb" }} />
                     <div>
                       <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>Target</div>
                       <div style={{ fontSize: 12, fontWeight: 600, color: "#374151" }}>{item.monthlyTargetFormatted}</div>
@@ -106,7 +106,7 @@ export default function PaceForecasting({ data, daysWithData, daysInMonth, daysR
                         <div style={{ width: 1, height: 24, background: "#e5e7eb" }} />
                         <div>
                           <div style={{ fontSize: 9, color: "#9ca3af", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em" }}>% Targeta</div>
-                          <div style={{ fontSize: 14, fontWeight: 800, color: s.color }}>{item.projectedPct}%</div>
+                          <div style={{ fontSize: 14, fontWeight: 800, color: s.color }}>{item.monthlyProgressPct}%</div>
                         </div>
                       </>
                     )}

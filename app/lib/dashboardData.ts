@@ -162,8 +162,9 @@ export function buildDayKpiData(
 // KPICard-ready data combining two comparisons for a single selected date:
 //  - Daily: the exact entered value for that date vs. the monthly target's daily pace
 //    (monthly target / days in month for additive rows; the rate target itself for rate rows).
-//  - Monthly: the month-to-date sum/average (through the selected date, inclusive) vs. the full
-//    monthly target, plus a pace projection to end-of-month.
+//  - Monthly: the on-books/MTD snapshot vs. the full monthly target. For Room Nights and Revenue
+//    this snapshot already IS the whole-month picture (see buildDayKpiData) — it is never rescaled
+//    by days elapsed. For ADR/Occupancy/RevPAR it's already an average, so it's also shown as-is.
 // Kept for Pace Forecasting only — the KPI cards themselves use the simpler buildDayKpiData above.
 export interface DualKpiData {
   key: RowKey;
@@ -232,12 +233,12 @@ export function buildDualKpiData(
     const mtdValue = mtdAgg[rowDef.key];
     const monthlyProgressPct = hasTarget && rawMonthlyTarget !== 0 ? Math.round((mtdValue / rawMonthlyTarget) * 1000) / 10 : 0;
 
-    // Additive metrics (revenue, room nights) accumulate — project the run-rate forward.
-    // Rate metrics (ADR, occupancy, RevPAR) don't accumulate — the MTD average IS the projection.
-    const projected = additive
-      ? (daysElapsed > 0 ? (mtdValue / daysElapsed) * daysInMonth : 0)
-      : mtdValue;
-    const projectedPct = hasTarget && rawMonthlyTarget !== 0 ? Math.round((projected / rawMonthlyTarget) * 1000) / 10 : 0;
+    // Room Nights and Revenue are on-books snapshots, not a daily rate — the latest reading already
+    // represents the whole target period, so it is never rescaled by days elapsed / days remaining
+    // (doing so double-counts the same on-books pipeline of bookings). ADR/Occupancy/RevPAR are
+    // already averages for the same reason: the current reading IS the picture, not a partial one.
+    const projected = mtdValue;
+    const projectedPct = monthlyProgressPct;
 
     return {
       key: rowDef.key,
