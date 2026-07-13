@@ -9,7 +9,7 @@ import {
   isAdditiveRow,
   type RowKey,
 } from "../context/HotelContext";
-import type { KPIData } from "../data/hotelData";
+import type { KPIStatus } from "../data/hotelData";
 
 // ── Date helpers ───────────────────────────────────────────────────────────────
 
@@ -103,24 +103,64 @@ export async function fetchMonthlyTargetFor(hotelId: string, yearMonth: string):
   return data ?? null;
 }
 
-// Builds day-mode KPICard-ready data: exact entered values for one date, vs. the monthly target's
-// daily pace, vs. the actual daily_reports row for the same calendar date one year prior (falling
-// back to the entry's own manually-entered "same day last year" field if no historical row exists).
-export function buildDayKpiData(
+// KPICard-ready data combining two comparisons for a single selected date:
+//  - Daily: the exact entered value for that date vs. the monthly target's daily pace
+//    (monthly target / days in month for additive rows; the rate target itself for rate rows).
+//  - Monthly: the month-to-date sum/average (through the selected date, inclusive) vs. the full
+//    monthly target, plus a pace projection to end-of-month.
+export interface DualKpiData {
+  key: RowKey;
+  label: string;
+  unit?: string;
+  prefix?: string;
+
+  dailyValueFormatted: string;
+  hasDailyEntry: boolean;
+  dailyTargetFormatted: string;
+  dailyGapFormatted: string;
+  dailyAchievement: number;
+  dailyStatus: KPIStatus;
+
+  yoyChangePct: number | null;
+  lastYearLabel: string;
+
+  hasMtdData: boolean;
+  mtdValueFormatted: string;
+  hasMonthlyTarget: boolean;
+  monthlyTargetFormatted: string;
+  monthlyProgressPct: number;
+  daysElapsed: number;
+  daysInMonth: number;
+  daysRemaining: number;
+  projectedFormatted: string;
+  projectedPct: number;
+  monthlyStatus: KPIStatus;
+}
+
+// daysElapsed for the pace projection is the number of days that actually have an entered
+// report (mtdAgg.daysWithData), not the calendar day-of-month — this keeps the projection honest
+// if a report was skipped, instead of silently diluting the average with a phantom missing day.
+export function buildDualKpiData(
   row: DailyReportRow | null,
   lastYearRow: DailyReportRow | null,
   monthlyTarget: MonthlyTargetRow | null,
+  mtdAgg: PeriodAggregate,
   daysInMonth: number,
-): KPIData[] {
+): DualKpiData[] {
   const entry = row ? dbRowToEntryData(row) : null;
   const lastYearEntry = lastYearRow ? dbRowToEntryData(lastYearRow) : null;
   const hasEntry = Boolean(entry);
   const hasTarget = Boolean(monthlyTarget);
+  const hasMtdData = mtdAgg.daysWithData > 0;
+  const daysElapsed = mtdAgg.daysWithData;
+  const daysRemaining = Math.max(0, daysInMonth - daysElapsed);
 
   return ROW_DEFS.map(rowDef => {
+    const additive = isAdditiveRow(rowDef.key);
+
     const danas = entry ? entry[rowDef.key].naKnjigamaDanas : 0;
     const rawMonthlyTarget = monthlyTarget ? monthlyTarget[ROW_TARGET_FIELD[rowDef.key]] : 0;
-    const dailyTarget = isAdditiveRow(rowDef.key) && daysInMonth > 0 ? rawMonthlyTarget / daysInMonth : rawMonthlyTarget;
+    const dailyTarget = additive && daysInMonth > 0 ? rawMonthlyTarget / daysInMonth : rawMonthlyTarget;
 
     const lastYear = lastYearEntry
       ? lastYearEntry[rowDef.key].naKnjigamaDanas
@@ -128,33 +168,47 @@ export function buildDayKpiData(
         ? entry[rowDef.key].istiDanProsleGodine
         : 0;
 
-    const gap = danas - dailyTarget;
-    const achievement = hasTarget && dailyTarget !== 0 ? Math.round((danas / dailyTarget) * 1000) / 10 : 0;
-    const remaining = dailyTarget - danas;
+    const dailyGap = danas - dailyTarget;
+    const dailyAchievement = hasTarget && dailyTarget !== 0 ? Math.round((danas / dailyTarget) * 1000) / 10 : 0;
     const yoyChangePct = hasEntry && lastYear !== 0 ? Math.round(((danas - lastYear) / lastYear) * 1000) / 10 : null;
 
-    let remainingLabel = "—";
-    if (hasEntry && hasTarget) {
-      remainingLabel = remaining > 0
-        ? `${formatNumber(remaining, rowDef)} preostalo`
-        : `${formatNumber(Math.abs(remaining), rowDef)} iznad targeta`;
-    }
+    const mtdValue = mtdAgg[rowDef.key];
+    const monthlyProgressPct = hasTarget && rawMonthlyTarget !== 0 ? Math.round((mtdValue / rawMonthlyTarget) * 1000) / 10 : 0;
+
+    // Additive metrics (revenue, room nights) accumulate — project the run-rate forward.
+    // Rate metrics (ADR, occupancy, RevPAR) don't accumulate — the MTD average IS the projection.
+    const projected = additive
+      ? (daysElapsed > 0 ? (mtdValue / daysElapsed) * daysInMonth : 0)
+      : mtdValue;
+    const projectedPct = hasTarget && rawMonthlyTarget !== 0 ? Math.round((projected / rawMonthlyTarget) * 1000) / 10 : 0;
 
     return {
+      key: rowDef.key,
       label: rowDef.label,
-      value: hasEntry ? formatNumber(danas, rowDef) : "—",
-      rawValue: danas,
-      target: hasTarget ? formatNumber(dailyTarget, rowDef) : "—",
-      rawTarget: dailyTarget,
-      gap: hasEntry && hasTarget ? `${gap >= 0 ? "+" : ""}${formatNumber(gap, rowDef)}` : "—",
-      achievement: hasEntry ? achievement : 0,
       unit: rowDef.unit,
       prefix: rowDef.prefix,
-      status: statusFor(achievement, hasTarget, !hasEntry),
-      remainingLabel,
-      lastYearValue: lastYear,
-      lastYearLabel: hasEntry ? formatNumber(lastYear, rowDef) : "—",
+
+      dailyValueFormatted: hasEntry ? formatNumber(danas, rowDef) : "—",
+      hasDailyEntry: hasEntry,
+      dailyTargetFormatted: hasTarget ? formatNumber(dailyTarget, rowDef) : "—",
+      dailyGapFormatted: hasEntry && hasTarget ? `${dailyGap >= 0 ? "+" : ""}${formatNumber(dailyGap, rowDef)}` : "—",
+      dailyAchievement: hasEntry ? dailyAchievement : 0,
+      dailyStatus: statusFor(dailyAchievement, hasTarget, !hasEntry),
+
       yoyChangePct,
+      lastYearLabel: hasEntry ? formatNumber(lastYear, rowDef) : "—",
+
+      hasMtdData,
+      mtdValueFormatted: hasMtdData ? formatNumber(mtdValue, rowDef) : "—",
+      hasMonthlyTarget: hasTarget,
+      monthlyTargetFormatted: hasTarget ? formatNumber(rawMonthlyTarget, rowDef) : "—",
+      monthlyProgressPct,
+      daysElapsed,
+      daysInMonth,
+      daysRemaining,
+      projectedFormatted: hasMtdData ? formatNumber(projected, rowDef) : "—",
+      projectedPct,
+      monthlyStatus: statusFor(projectedPct, hasTarget, !hasMtdData),
     };
   });
 }
@@ -241,18 +295,25 @@ export interface StayMonthDef {
   label: string;
 }
 
-// On-books tracks demand for months that haven't happened yet — the 3 months following the
-// snapshot date's own month (that month's actuals already live in daily_reports).
+// On-books tracks demand for months that haven't happened yet — the 2 months following the
+// snapshot date's own month (that month's actuals already live in daily_reports; see getCurrentMonthDef).
 export function getOnBooksStayMonths(dateISO: string): StayMonthDef[] {
   const { year, month } = dateParts(dateISO);
   const defs: StayMonthDef[] = [];
-  for (let i = 1; i <= 3; i++) {
+  for (let i = 1; i <= 2; i++) {
     const total = month - 1 + i;
     const y = year + Math.floor(total / 12);
     const m = (total % 12) + 1;
     defs.push({ month: m, year: y, label: `${MONTHS_SR[m - 1]} ${y}` });
   }
   return defs;
+}
+
+// The snapshot date's own calendar month — its actuals live in daily_reports rather than
+// onbooks_snapshots, but it's shown alongside the future months as the "current month" card.
+export function getCurrentMonthDef(dateISO: string): StayMonthDef {
+  const { year, month } = dateParts(dateISO);
+  return { month, year, label: `${MONTHS_SR[month - 1]} ${year}` };
 }
 
 export function emptyOnBooksMonths(dateISO: string): OnBooksMonthInput[] {

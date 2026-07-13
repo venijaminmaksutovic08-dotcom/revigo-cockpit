@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target, FileSpreadsheet } from "lucide-react";
+import { DollarSign, Moon, BarChart2, Percent, TrendingUp, Target, FileSpreadsheet, History } from "lucide-react";
 import KPICard from "./components/KPICard";
 import PriceTable from "./components/PriceTable";
 import RightPanel from "./components/RightPanel";
@@ -16,15 +16,18 @@ import EventsWidget from "./components/EventsWidget";
 import CompetitorPrices from "./components/CompetitorPrices";
 import MonthlyTargetsModal from "./components/MonthlyTargetsModal";
 import ImportReportModal from "./components/ImportReportModal";
+import LastYearOnBooksModal from "./components/LastYearOnBooksModal";
 import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
-import { useHotel, ROW_DEFS } from "./context/HotelContext";
+import { useHotel, MONTHS_SR } from "./context/HotelContext";
 import type { ParsedReportRow } from "./lib/reportImport";
 import {
-  todayISO, shiftYears, yearMonthOf, daysInMonthOf, dateParts, formatDateSr,
+  todayISO, shiftYears, yearMonthOf, daysInMonthOf, dateParts, toISO, formatDateSr,
   fetchLatestReportDate, fetchDayReport, fetchMonthlyTargetFor, fetchPeriodAggregate,
-  buildDayKpiData, type PeriodAggregate,
+  getOnBooksStayMonths, buildDualKpiData, type PeriodAggregate,
 } from "./lib/dashboardData";
 import type { DailyReportRow, MonthlyTargetRow } from "./lib/supabaseClient";
+
+const EMPTY_AGG: PeriodAggregate = { brojNocenja: 0, ukupanPrihod: 0, adr: 0, popunjenost: 0, revpar: 0, daysWithData: 0 };
 
 const KPI_ICON_BY_ROW: Record<string, React.ReactNode> = {
   brojNocenja:   <Moon       key="nights"  size={18} color="#C9A84C" strokeWidth={2.5} />,
@@ -77,6 +80,8 @@ export default function DashboardPage() {
   const canEnterData = Boolean(selectedHotel && selectedPeriod);
   const [showTargetsModal, setShowTargetsModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
+  const [showLastYearModal, setShowLastYearModal] = useState(false);
+  const [onBooksRefreshKey, setOnBooksRefreshKey] = useState(0);
 
   // ── Dashboard's own date navigation — independent of the TopBar's month/period picker ──────
   const [mode, setMode]                 = useState<DashboardViewMode>("day");
@@ -99,32 +104,37 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [selectedHotel]);
 
-  // ── Day mode: exact entered values for the selected date ───────────────────────────────────
+  // ── Day mode: exact entered values for the selected date, plus the month-to-date aggregate ──
   const [dayRow, setDayRow]                             = useState<DailyReportRow | null>(null);
   const [dayLastYearRow, setDayLastYearRow]              = useState<DailyReportRow | null>(null);
   const [dayMonthlyTarget, setDayMonthlyTarget]           = useState<MonthlyTargetRow | null>(null);
+  const [mtdAgg, setMtdAgg]                               = useState<PeriodAggregate>(EMPTY_AGG);
   const [dayLoading, setDayLoading]                       = useState(false);
 
   useEffect(() => {
     if (!selectedHotel || mode !== "day" || !selectedDate) return;
     let cancelled = false;
     setDayLoading(true);
+    const { year, month } = dateParts(selectedDate);
+    const monthStartISO = toISO(year, month, 1);
     Promise.all([
       fetchDayReport(selectedHotel, selectedDate),
       fetchDayReport(selectedHotel, shiftYears(selectedDate, -1)),
       fetchMonthlyTargetFor(selectedHotel, yearMonthOf(selectedDate)),
-    ]).then(([row, lastYearRow, target]) => {
+      fetchPeriodAggregate(selectedHotel, monthStartISO, selectedDate),
+    ]).then(([row, lastYearRow, target, agg]) => {
       if (cancelled) return;
       setDayRow(row);
       setDayLastYearRow(lastYearRow);
       setDayMonthlyTarget(target);
+      setMtdAgg(agg);
       setDayLoading(false);
     });
     return () => { cancelled = true; };
   }, [selectedHotel, mode, selectedDate]);
 
-  const dayKpiData = mode === "day"
-    ? buildDayKpiData(dayRow, dayLastYearRow, dayMonthlyTarget, daysInMonthOf(selectedDate))
+  const dualKpiData = mode === "day"
+    ? buildDualKpiData(dayRow, dayLastYearRow, dayMonthlyTarget, mtdAgg, daysInMonthOf(selectedDate))
     : [];
 
   // ── Period mode: sum/average over a date range ──────────────────────────────────────────────
@@ -160,23 +170,40 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {canEnterData && (
-          <div className="flex items-center gap-2">
+        {selectedHotel && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {canEnterData && (
+              <>
+                <button
+                  onClick={() => setShowImportModal(true)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    height: 38, paddingLeft: 16, paddingRight: 16,
+                    borderRadius: 8, border: "1px solid #e5e7eb",
+                    background: "#f9fafb",
+                    color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  <FileSpreadsheet size={15} />
+                  Uvezi izveštaj
+                </button>
+                <button
+                  onClick={() => setShowTargetsModal(true)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: 8,
+                    height: 38, paddingLeft: 16, paddingRight: 16,
+                    borderRadius: 8, border: "1px solid rgba(201,168,76,0.3)",
+                    background: "rgba(201,168,76,0.06)",
+                    color: "#C9A84C", fontSize: 13, fontWeight: 600, cursor: "pointer",
+                  }}
+                >
+                  <Target size={15} />
+                  Postavi mesečne targete
+                </button>
+              </>
+            )}
             <button
-              onClick={() => setShowImportModal(true)}
-              style={{
-                display: "flex", alignItems: "center", gap: 8,
-                height: 38, paddingLeft: 16, paddingRight: 16,
-                borderRadius: 8, border: "1px solid #e5e7eb",
-                background: "#f9fafb",
-                color: "#374151", fontSize: 13, fontWeight: 600, cursor: "pointer",
-              }}
-            >
-              <FileSpreadsheet size={15} />
-              Uvezi izveštaj
-            </button>
-            <button
-              onClick={() => setShowTargetsModal(true)}
+              onClick={() => setShowLastYearModal(true)}
               style={{
                 display: "flex", alignItems: "center", gap: 8,
                 height: 38, paddingLeft: 16, paddingRight: 16,
@@ -185,8 +212,8 @@ export default function DashboardPage() {
                 color: "#C9A84C", fontSize: 13, fontWeight: 600, cursor: "pointer",
               }}
             >
-              <Target size={15} />
-              Postavi mesečne targete
+              <History size={15} />
+              Unesi podatke prošle godine
             </button>
           </div>
         )}
@@ -211,10 +238,9 @@ export default function DashboardPage() {
             Actuals — {formatDateSr(selectedDate)}
           </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-5" style={{ opacity: dayLoading ? 0.6 : 1, transition: "opacity 0.15s" }}>
-            {dayKpiData.map((kpi, i) => {
-              const rowKey = ROW_DEFS.find(r => r.label === kpi.label)?.key ?? "";
-              return <KPICard key={kpi.label} data={kpi} icon={KPI_ICON_BY_ROW[rowKey]} index={i} />;
-            })}
+            {dualKpiData.map((kpi, i) => (
+              <KPICard key={kpi.key} data={kpi} icon={KPI_ICON_BY_ROW[kpi.key]} index={i} />
+            ))}
           </div>
         </>
       )}
@@ -232,7 +258,7 @@ export default function DashboardPage() {
         </>
       )}
 
-      {selectedHotel && <OnBooksSection hotelId={selectedHotel} asOfDate={asOfDate} />}
+      {selectedHotel && <OnBooksSection hotelId={selectedHotel} asOfDate={asOfDate} refreshKey={onBooksRefreshKey} />}
 
       {selectedHotel && (
         <ReportLog
@@ -244,7 +270,15 @@ export default function DashboardPage() {
         />
       )}
 
-      {canEnterData && <PaceForecasting />}
+      {selectedHotel && mode === "day" && (
+        <PaceForecasting
+          data={dualKpiData}
+          daysWithData={mtdAgg.daysWithData}
+          daysInMonth={daysInMonthOf(selectedDate)}
+          daysRemaining={Math.max(0, daysInMonthOf(selectedDate) - mtdAgg.daysWithData)}
+          periodLabel={`${MONTHS_SR[dateParts(selectedDate).month - 1]} ${dateParts(selectedDate).year}`}
+        />
+      )}
       {canEnterData && <ManagerNotes />}
       {selectedHotel && <WeatherWidget />}
       {canEnterData && <EventsWidget />}
@@ -280,6 +314,20 @@ export default function DashboardPage() {
             setShowImportModal(false);
           }}
           onClose={() => setShowImportModal(false)}
+        />
+      )}
+
+      {showLastYearModal && selectedHotel && (
+        <LastYearOnBooksModal
+          hotelId={selectedHotel}
+          asOfDate={asOfDate}
+          lastYearAsOfDate={shiftYears(asOfDate, -1)}
+          stayMonths={getOnBooksStayMonths(asOfDate)}
+          onSaved={() => {
+            setOnBooksRefreshKey(k => k + 1);
+            setShowLastYearModal(false);
+          }}
+          onClose={() => setShowLastYearModal(false)}
         />
       )}
     </>
