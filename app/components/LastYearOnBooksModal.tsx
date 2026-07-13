@@ -120,7 +120,9 @@ export default function LastYearOnBooksModal({ hotelId, asOfDate, lastYearAsOfDa
         <div className="px-6 py-5 flex flex-col gap-5 flex-1 md:flex-none overflow-y-auto">
           {stayMonths.map((def, i) => (
             <div key={`${def.year}-${def.month}`}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 8 }}>{def.label}</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#111827", marginBottom: 8 }}>
+                {def.label.replace(String(def.year), String(def.year - 1))}
+              </div>
               <div className="flex items-center gap-3 flex-wrap">
                 <div style={{ flex: "1 1 140px" }}>
                   <label style={{ display: "block", fontSize: 11, color: "#9ca3af", marginBottom: 4 }}>Noćenja LG</label>

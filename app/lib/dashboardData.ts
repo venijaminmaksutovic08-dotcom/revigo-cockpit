@@ -281,6 +281,42 @@ export interface PeriodAggregate {
   daysWithData: number;
 }
 
+// Pace Forecast must project from what has actually happened, not from the on-books figure —
+// each daily_reports row's on_books_today is already a running total for the whole target period
+// as of that row's own report_date (see buildDayKpiData), so summing several rows together (the
+// way fetchPeriodAggregate does for the On-Books section) double- and triple-counts the same
+// pipeline of bookings. The most recent row dated strictly before today already reflects the
+// month's actual pace to date, so that single row — not a sum across rows — is the "actuals so
+// far" figure the projection is built from. Row count still feeds the existing days-elapsed /
+// insufficient-data logic in buildDualKpiData and PaceForecasting, unchanged.
+export async function fetchPaceActuals(hotelId: string, monthStartISO: string, monthEndISO: string): Promise<PeriodAggregate> {
+  const { data, error } = await supabase
+    .from("daily_reports")
+    .select("on_books_today")
+    .eq("hotel_id", hotelId)
+    .gte("report_date", monthStartISO)
+    .lte("report_date", monthEndISO)
+    .lt("report_date", todayISO())
+    .order("report_date", { ascending: false });
+
+  if (error) console.error("Failed to load pace actuals:", error.message);
+  const rows = (data ?? []) as Pick<DailyReportRow, "on_books_today">[];
+
+  if (rows.length === 0) {
+    return { brojNocenja: 0, ukupanPrihod: 0, adr: 0, popunjenost: 0, revpar: 0, daysWithData: 0 };
+  }
+
+  const latest = rows[0].on_books_today;
+  return {
+    brojNocenja: Number(latest.brojNocenja ?? 0),
+    ukupanPrihod: Number(latest.ukupanPrihod ?? 0),
+    adr: Number(latest.adr ?? 0),
+    popunjenost: Number(latest.popunjenost ?? 0),
+    revpar: Number(latest.revpar ?? 0),
+    daysWithData: rows.length,
+  };
+}
+
 export async function fetchPeriodAggregate(hotelId: string, startISO: string, endISO: string): Promise<PeriodAggregate> {
   const { data, error } = await supabase
     .from("daily_reports")

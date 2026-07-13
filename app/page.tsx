@@ -22,7 +22,7 @@ import { useHotel, MONTHS_SR, ROW_DEFS } from "./context/HotelContext";
 import type { ParsedReportRow } from "./lib/reportImport";
 import {
   todayISO, shiftYears, yearMonthOf, daysInMonthOf, dateParts, toISO, formatDateSr,
-  fetchLatestReportDate, fetchDayReport, fetchMonthlyTargetFor, fetchPeriodAggregate,
+  fetchLatestReportDate, fetchDayReport, fetchMonthlyTargetFor, fetchPeriodAggregate, fetchPaceActuals,
   getOnBooksStayMonths, buildDayKpiData, buildDualKpiData, type PeriodAggregate,
 } from "./lib/dashboardData";
 import type { DailyReportRow, MonthlyTargetRow } from "./lib/supabaseClient";
@@ -104,7 +104,8 @@ export default function DashboardPage() {
     return () => { cancelled = true; };
   }, [selectedHotel]);
 
-  // ── Day mode: exact entered values for the selected date, plus the month-to-date aggregate ──
+  // ── Day mode: exact entered values for the selected date, plus Pace Forecast's actuals-only
+  // aggregate (days strictly before real "today", within the selected date's month) ────────────
   const [dayRow, setDayRow]                             = useState<DailyReportRow | null>(null);
   const [dayLastYearRow, setDayLastYearRow]              = useState<DailyReportRow | null>(null);
   const [dayMonthlyTarget, setDayMonthlyTarget]           = useState<MonthlyTargetRow | null>(null);
@@ -117,11 +118,12 @@ export default function DashboardPage() {
     setDayLoading(true);
     const { year, month } = dateParts(selectedDate);
     const monthStartISO = toISO(year, month, 1);
+    const monthEndISO = toISO(year, month, daysInMonthOf(selectedDate));
     Promise.all([
       fetchDayReport(selectedHotel, selectedDate),
       fetchDayReport(selectedHotel, shiftYears(selectedDate, -1)),
       fetchMonthlyTargetFor(selectedHotel, yearMonthOf(selectedDate)),
-      fetchPeriodAggregate(selectedHotel, monthStartISO, selectedDate),
+      fetchPaceActuals(selectedHotel, monthStartISO, monthEndISO),
     ]).then(([row, lastYearRow, target, agg]) => {
       if (cancelled) return;
       setDayRow(row);
