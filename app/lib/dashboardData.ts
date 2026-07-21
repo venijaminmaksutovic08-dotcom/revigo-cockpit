@@ -352,6 +352,65 @@ export async function fetchPeriodAggregate(hotelId: string, startISO: string, en
   };
 }
 
+export interface ReportSnapshot {
+  reportDate: string;
+  brojNocenja: number;
+  ukupanPrihod: number;
+  adr: number;
+  popunjenost: number;
+  revpar: number;
+}
+
+// Returns the single most recent daily_reports row in the range, or null if there isn't one.
+// Used wherever a period needs "the on-books picture as of the latest report" rather than a sum
+// across every day in the range — summing double- and triple-counts the same on-books pipeline
+// (see fetchPeriodAggregate's caveat above), since each row's on_books_today is already a running
+// total as of its own report_date.
+export async function fetchLatestReportSnapshot(hotelId: string, startISO: string, endISO: string): Promise<ReportSnapshot | null> {
+  const { data, error } = await supabase
+    .from("daily_reports")
+    .select("report_date, on_books_today")
+    .eq("hotel_id", hotelId)
+    .gte("report_date", startISO)
+    .lte("report_date", endISO)
+    .order("report_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) console.error("Failed to load latest report snapshot:", error.message);
+  if (!data) return null;
+
+  const o = data.on_books_today as Record<string, number>;
+  return {
+    reportDate: data.report_date,
+    brojNocenja: Number(o.brojNocenja ?? 0),
+    ukupanPrihod: Number(o.ukupanPrihod ?? 0),
+    adr: Number(o.adr ?? 0),
+    popunjenost: Number(o.popunjenost ?? 0),
+    revpar: Number(o.revpar ?? 0),
+  };
+}
+
+export interface CurrentMonthSnapshot {
+  reportDate: string | null;
+  roomsOnbooks: number;
+  revenueOnbooks: number;
+  occupancyOnbooks: number;
+}
+
+// The current-month on-books card must behave like the future-month cards: a single latest
+// reading, never a sum across every daily_reports row in the month.
+export async function fetchLatestMonthSnapshot(hotelId: string, startISO: string, endISO: string): Promise<CurrentMonthSnapshot> {
+  const snap = await fetchLatestReportSnapshot(hotelId, startISO, endISO);
+  if (!snap) return { reportDate: null, roomsOnbooks: 0, revenueOnbooks: 0, occupancyOnbooks: 0 };
+  return {
+    reportDate: snap.reportDate,
+    roomsOnbooks: snap.brojNocenja,
+    revenueOnbooks: snap.ukupanPrihod,
+    occupancyOnbooks: snap.popunjenost,
+  };
+}
+
 // ── Report log ───────────────────────────────────────────────────────────────
 
 export interface ReportLogEntry {

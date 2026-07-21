@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Building2, Plus, Trash2, RefreshCw, ExternalLink, Star } from "lucide-react";
+import { Building2, Plus, Trash2, RefreshCw, ExternalLink, Star, Check } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { useHotel } from "../context/HotelContext";
 import type { CompetitorResult } from "../api/competitors/route";
+
+function fmtRSD(n: number): string { return `${Math.round(n).toLocaleString("sr-RS")} RSD`; }
 
 interface CompetitorRow {
   id: string;
@@ -89,9 +91,29 @@ function ResultCard({ r }: { r: CompetitorResult }) {
 // ── main component ────────────────────────────────────────────────────────────
 
 export default function CompetitorPrices() {
-  const { hotels, selectedHotel } = useHotel();
+  const { hotels, selectedHotel, updateHotelPrice } = useHotel();
   const hotel = hotels.find(h => h.id === selectedHotel) ?? null;
   const city  = hotel?.city ?? "";
+
+  // Own price
+  const [priceInput, setPriceInput] = useState("");
+  const [savingPrice, setSavingPrice] = useState(false);
+
+  useEffect(() => {
+    setPriceInput(hotel?.currentPrice != null ? String(hotel.currentPrice) : "");
+  }, [hotel?.id, hotel?.currentPrice]);
+
+  const saveOwnPrice = useCallback(async () => {
+    if (!selectedHotel || savingPrice) return;
+    const parsed = Number(priceInput);
+    if (!priceInput.trim() || Number.isNaN(parsed) || parsed < 0) return;
+    setSavingPrice(true);
+    try {
+      await updateHotelPrice(selectedHotel, parsed);
+    } finally {
+      setSavingPrice(false);
+    }
+  }, [selectedHotel, priceInput, savingPrice, updateHotelPrice]);
 
   // Saved competitors
   const [competitors, setCompetitors] = useState<CompetitorRow[]>([]);
@@ -207,6 +229,59 @@ export default function CompetitorPrices() {
       </div>
 
       <div className="px-5 py-4 flex flex-col gap-5">
+
+        {/* ── PART 0: Our own price ──────────────────────────────────────────── */}
+        <div
+          className="rounded-xl"
+          style={{ padding: "12px 14px", background: "rgba(201,168,76,0.08)", border: "1px solid rgba(201,168,76,0.3)" }}
+        >
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#92400e" }}>
+                🏨 {hotel?.name ?? "Naš hotel"} (naš hotel)
+              </div>
+              <div style={{ fontSize: 18, fontWeight: 800, color: "#111827", marginTop: 2 }}>
+                {hotel?.currentPrice != null ? fmtRSD(hotel.currentPrice) : "Cena nije uneta"}
+              </div>
+            </div>
+            <div className="flex items-end gap-2">
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 600, color: "#92400e", marginBottom: 4 }}>Naša cena za noć</div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="number"
+                    min={0}
+                    value={priceInput}
+                    onChange={e => setPriceInput(e.target.value)}
+                    onKeyDown={e => { if (e.key === "Enter") saveOwnPrice(); }}
+                    placeholder="npr. 8500"
+                    style={{
+                      width: 110, height: 34, borderRadius: 7,
+                      border: "1px solid rgba(201,168,76,0.4)", paddingLeft: 10, paddingRight: 10,
+                      fontSize: 13, color: "#111827", background: "#ffffff", outline: "none",
+                    }}
+                  />
+                  <span style={{ fontSize: 12, color: "#92400e" }}>RSD</span>
+                  <button
+                    onClick={saveOwnPrice}
+                    disabled={savingPrice || !priceInput.trim()}
+                    className="flex items-center gap-1.5"
+                    style={{
+                      height: 34, paddingLeft: 12, paddingRight: 12, borderRadius: 7, border: "none",
+                      background: !priceInput.trim() ? "#f3f4f6" : "linear-gradient(135deg, #C9A84C 0%, #E8C96B 100%)",
+                      color: !priceInput.trim() ? "#9ca3af" : "#ffffff",
+                      fontSize: 12, fontWeight: 600,
+                      cursor: savingPrice || !priceInput.trim() ? "default" : "pointer",
+                    }}
+                  >
+                    <Check size={13} />
+                    Sačuvaj
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {/* ── PART 1: Market scan ───────────────────────────────────────────── */}
         <div>

@@ -10,6 +10,7 @@ export interface HotelRow {
   name: string;
   city: string;
   rooms: number;
+  current_price: number | null;
   created_at: string;
 }
 

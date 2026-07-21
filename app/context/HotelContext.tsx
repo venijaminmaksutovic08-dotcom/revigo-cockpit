@@ -9,6 +9,7 @@ export interface SavedHotel {
   name: string;
   rooms: number;
   city: string;
+  currentPrice: number | null;
 }
 
 export interface NewHotelInput {
@@ -279,6 +280,7 @@ interface HotelContextValue {
   setSelectedPeriod: (p: string) => void;
   addHotel: (hotel: NewHotelInput) => Promise<void>;
   deleteHotel: (id: string) => Promise<void>;
+  updateHotelPrice: (id: string, price: number) => Promise<void>;
   monthInfo: MonthInfo | null;
   monthEntries: Record<string, EntryData>;
   getEntryForDate: (dateISO: string) => EntryData | null;
@@ -323,11 +325,11 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     (async () => {
       const { data, error } = await supabase
         .from("hotels")
-        .select("id, name, city, rooms, created_at")
+        .select("id, name, city, rooms, current_price, created_at")
         .order("created_at", { ascending: true });
       if (!active) return;
       if (!error && data) {
-        setHotels(data);
+        setHotels(data.map(h => ({ id: h.id, name: h.name, city: h.city, rooms: h.rooms, currentPrice: h.current_price })));
       } else if (error) {
         console.error("Failed to load hotels from Supabase:", error.message);
       }
@@ -400,10 +402,10 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     const { data, error } = await supabase
       .from("hotels")
       .insert({ name: hotel.name, city: hotel.city, rooms: hotel.rooms })
-      .select("id, name, city, rooms, created_at")
+      .select("id, name, city, rooms, current_price, created_at")
       .single();
     if (!error && data) {
-      setHotels(prev => [...prev, data]);
+      setHotels(prev => [...prev, { id: data.id, name: data.name, city: data.city, rooms: data.rooms, currentPrice: data.current_price }]);
       setSelectedHotel(data.id);
     } else if (error) {
       console.error("Failed to add hotel in Supabase:", error.message);
@@ -417,6 +419,15 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
       setSelectedHotel(prevSelected => (prevSelected === id ? "" : prevSelected));
     } else {
       console.error("Failed to delete hotel in Supabase:", error.message);
+    }
+  }, []);
+
+  const updateHotelPrice = useCallback(async (id: string, price: number) => {
+    const { error } = await supabase.from("hotels").update({ current_price: price }).eq("id", id);
+    if (!error) {
+      setHotels(prev => prev.map(h => (h.id === id ? { ...h, currentPrice: price } : h)));
+    } else {
+      console.error("Failed to update hotel price in Supabase:", error.message);
     }
   }, []);
 
@@ -615,6 +626,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     setSelectedPeriod,
     addHotel,
     deleteHotel,
+    updateHotelPrice,
     monthInfo,
     monthEntries,
     getEntryForDate,

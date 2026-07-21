@@ -6,8 +6,10 @@ import {
   FileText, Calendar, CloudSun,
 } from "lucide-react";
 import { useHotel, MONTHS_SR, type RowKey } from "../context/HotelContext";
-import { supabase, type DailyReportRow } from "../lib/supabaseClient";
+import { supabase } from "../lib/supabaseClient";
 import { useWeatherForecast } from "../hooks/useWeatherForecast";
+import { useHistoricalWeather } from "../hooks/useHistoricalWeather";
+import { fetchLatestReportSnapshot, formatDateSr } from "../lib/dashboardData";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -31,36 +33,10 @@ interface PeriodKpis { brojNocenja: number; ukupanPrihod: number; adr: number; p
 interface EventItem  { title: string; url: string; domain: string }
 
 interface PeriodData {
-  kpis:         PeriodKpis;
-  daysWithData: number;
-  notes:        string | null;
-  events:       EventItem[];
-}
-
-// ── Aggregation helpers ────────────────────────────────────────────────────────
-
-function aggregateRows(rows: DailyReportRow[]): PeriodKpis {
-  let nocevanjaSum = 0, prihodSum = 0;
-  let popunjenostSum = 0, popunjenostCount = 0;
-  let revparSum = 0, revparCount = 0;
-
-  for (const row of rows) {
-    const obt = row.on_books_today;
-    nocevanjaSum += Number(obt.brojNocenja  ?? 0);
-    prihodSum    += Number(obt.ukupanPrihod ?? 0);
-    const pop = Number(obt.popunjenost ?? 0);
-    const rev = Number(obt.revpar      ?? 0);
-    if (pop !== 0) { popunjenostSum += pop; popunjenostCount++; }
-    if (rev !== 0) { revparSum      += rev; revparCount++; }
-  }
-
-  return {
-    brojNocenja:  nocevanjaSum,
-    ukupanPrihod: prihodSum,
-    adr:          nocevanjaSum > 0 ? prihodSum / nocevanjaSum : 0,
-    popunjenost:  popunjenostCount > 0 ? popunjenostSum / popunjenostCount : 0,
-    revpar:       revparCount      > 0 ? revparSum      / revparCount      : 0,
-  };
+  kpis:       PeriodKpis | null;
+  reportDate: string | null;
+  notes:      string | null;
+  events:     EventItem[];
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────────
@@ -86,6 +62,17 @@ function isCurrentMonth(year: number, month: number): boolean {
   return year === CUR_YEAR && month === CUR_MONTH;
 }
 
+// Strictly before the current calendar month — the only range the Archive API has data for.
+function isPastMonth(year: number, month: number): boolean {
+  return year < CUR_YEAR || (year === CUR_YEAR && month < CUR_MONTH);
+}
+
+function monthDateRange(year: number, month: number): { start: string; end: string } {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const ym  = `${year}-${pad(month)}`;
+  return { start: `${ym}-01`, end: `${ym}-${pad(new Date(year, month, 0).getDate())}` };
+}
+
 // ── Fetch period data ──────────────────────────────────────────────────────────
 
 async function fetchPeriodData(
@@ -94,18 +81,11 @@ async function fetchPeriodData(
   year:     number,
   month:    number,
 ): Promise<PeriodData> {
-  const pad   = (n: number) => String(n).padStart(2, "0");
-  const ym    = `${year}-${pad(month)}`;
-  const start = `${ym}-01`;
-  const end   = `${ym}-${pad(new Date(year, month, 0).getDate())}`;
+  const { start, end } = monthDateRange(year, month);
+  const ym = `${year}-${String(month).padStart(2, "0")}`;
 
-  const [reportsRes, targetRes] = await Promise.all([
-    supabase
-      .from("daily_reports")
-      .select("on_books_today")
-      .eq("hotel_id", hotelId)
-      .gte("report_date", start)
-      .lte("report_date", end),
+  const [snapshot, targetRes] = await Promise.all([
+    fetchLatestReportSnapshot(hotelId, start, end),
     supabase
       .from("monthly_targets")
       .select("notes")
@@ -114,8 +94,6 @@ async function fetchPeriodData(
       .maybeSingle(),
   ]);
 
-  const rows = (reportsRes.data ?? []) as Pick<DailyReportRow, "on_books_today">[];
-  const kpis = aggregateRows(rows as DailyReportRow[]);
   const notes = targetRes.data?.notes ?? null;
 
   // Events (fire-and-forget, ignore errors)
@@ -126,7 +104,14 @@ async function fetchPeriodData(
     if (res.ok) events = await res.json();
   } catch { /* no events */ }
 
-  return { kpis, daysWithData: rows.length, notes, events };
+  return {
+    kpis: snapshot
+      ? { brojNocenja: snapshot.brojNocenja, ukupanPrihod: snapshot.ukupanPrihod, adr: snapshot.adr, popunjenost: snapshot.popunjenost, revpar: snapshot.revpar }
+      : null,
+    reportDate: snapshot?.reportDate ?? null,
+    notes,
+    events,
+  };
 }
 
 // ── Period Selector ────────────────────────────────────────────────────────────
@@ -195,17 +180,20 @@ function PeriodSelector({ label, color, hotels, hotelId, month, year, onHotel, o
 // ── Context card ───────────────────────────────────────────────────────────────
 
 interface ContextCardProps {
-  color:         string;
-  label:         string;
-  data:          PeriodData | null;
-  year:          number;
-  month:         number;
-  weatherDays:   ReturnType<typeof useWeatherForecast>["days"];
-  weatherStatus: ReturnType<typeof useWeatherForecast>["status"];
+  color:            string;
+  label:            string;
+  data:             PeriodData | null;
+  year:             number;
+  month:            number;
+  weatherDays:      ReturnType<typeof useWeatherForecast>["days"];
+  weatherStatus:    ReturnType<typeof useWeatherForecast>["status"];
+  historicalSummary: ReturnType<typeof useHistoricalWeather>["summary"];
+  historicalStatus:  ReturnType<typeof useHistoricalWeather>["status"];
 }
 
-function ContextCard({ color, label, data, year, month, weatherDays, weatherStatus }: ContextCardProps) {
-  const showWeather = isCurrentMonth(year, month);
+function ContextCard({ color, label, data, year, month, weatherDays, weatherStatus, historicalSummary, historicalStatus }: ContextCardProps) {
+  const showForecast = isCurrentMonth(year, month);
+  const showHistorical = isPastMonth(year, month);
   const badWeather  = weatherDays.filter(d => d.precipitation > 5 || d.weatherCode >= 80);
 
   return (
@@ -290,22 +278,38 @@ function ContextCard({ color, label, data, year, month, weatherDays, weatherStat
               Vremenske Prilike
             </span>
           </div>
-          {!showWeather ? (
-            <div style={{ fontSize: 12, color: "#d1d5db", fontStyle: "italic", lineHeight: 1.5 }}>
-              Istorijski vremenski podaci nisu dostupni — koristite Manager Notes za kontekst
-            </div>
-          ) : weatherStatus === "loading" ? (
-            <div style={{ fontSize: 12, color: "#d1d5db" }}>Učitavanje…</div>
-          ) : weatherStatus === "error" ? (
-            <div style={{ fontSize: 12, color: "#d1d5db" }}>Nije moguće učitati prognozu</div>
-          ) : badWeather.length > 0 ? (
-            <div style={{ fontSize: 12, color: "#92400e", lineHeight: 1.6 }}>
-              🌧️ {badWeather.length} {badWeather.length === 1 ? "dan" : "dana"} s lošim vremenom u narednih 7 dana
-              {" "}({badWeather.map(d => d.dayLabel).join(", ")})
-            </div>
+          {showForecast ? (
+            weatherStatus === "loading" ? (
+              <div style={{ fontSize: 12, color: "#d1d5db" }}>Učitavanje…</div>
+            ) : weatherStatus === "error" ? (
+              <div style={{ fontSize: 12, color: "#d1d5db" }}>Nije moguće učitati prognozu</div>
+            ) : badWeather.length > 0 ? (
+              <div style={{ fontSize: 12, color: "#92400e", lineHeight: 1.6 }}>
+                🌧️ {badWeather.length} {badWeather.length === 1 ? "dan" : "dana"} s lošim vremenom u narednih 7 dana
+                {" "}({badWeather.map(d => d.dayLabel).join(", ")})
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "#166534", lineHeight: 1.6 }}>
+                ☀️ Dobro vreme predviđeno za narednih 7 dana
+              </div>
+            )
+          ) : showHistorical ? (
+            historicalStatus === "loading" ? (
+              <div style={{ fontSize: 12, color: "#d1d5db" }}>Učitavanje istorijskih podataka…</div>
+            ) : historicalStatus === "error" ? (
+              <div style={{ fontSize: 12, color: "#d1d5db" }}>Nije moguće učitati istorijske podatke</div>
+            ) : historicalSummary ? (
+              <div style={{ fontSize: 12, color: historicalSummary.badWeatherDays > 0 ? "#92400e" : "#166534", lineHeight: 1.6 }}>
+                {historicalSummary.dominantEmoji} Prosečno {historicalSummary.avgTempMax}° / {historicalSummary.avgTempMin}°
+                {" "}· {historicalSummary.totalPrecipitation}mm padavina ukupno
+                {historicalSummary.badWeatherDays > 0 && ` · ${historicalSummary.badWeatherDays} ${historicalSummary.badWeatherDays === 1 ? "dan" : "dana"} s lošim vremenom`}
+              </div>
+            ) : (
+              <div style={{ fontSize: 12, color: "#d1d5db", fontStyle: "italic" }}>Nema istorijskih podataka</div>
+            )
           ) : (
-            <div style={{ fontSize: 12, color: "#166534", lineHeight: 1.6 }}>
-              ☀️ Dobro vreme predviđeno za narednih 7 dana
+            <div style={{ fontSize: 12, color: "#d1d5db", fontStyle: "italic", lineHeight: 1.5 }}>
+              Vremenski podaci nisu dostupni za buduće periode — koristite Manager Notes za kontekst
             </div>
           )}
         </div>
@@ -345,6 +349,13 @@ export default function PoredjenjaPage() {
   const weatherA = useWeatherForecast(cityA);
   const weatherB = useWeatherForecast(cityB);
 
+  // Historical weather only applies to months strictly before the current one — the Archive API
+  // has no data for the current/future months, so pass empty range args to keep the hook idle.
+  const rangeA = isPastMonth(yearA, monthA) ? monthDateRange(yearA, monthA) : null;
+  const rangeB = isPastMonth(yearB, monthB) ? monthDateRange(yearB, monthB) : null;
+  const historicalA = useHistoricalWeather(cityA, rangeA?.start ?? "", rangeA?.end ?? "");
+  const historicalB = useHistoricalWeather(cityB, rangeB?.start ?? "", rangeB?.end ?? "");
+
   // ── Fetch Period A ──────────────────────────────────────────────────────────
   useEffect(() => {
     if (!hotelA) { setDataA(null); return; }
@@ -371,7 +382,7 @@ export default function PoredjenjaPage() {
 
   // ── Insight text ────────────────────────────────────────────────────────────
   const insight = useMemo<string | null>(() => {
-    if (!dataA || !dataB) return null;
+    if (!dataA?.kpis || !dataB?.kpis) return null;
     const kA = dataA.kpis, kB = dataB.kpis;
     const parts: string[] = [];
 
@@ -506,8 +517,8 @@ export default function PoredjenjaPage() {
               </thead>
               <tbody>
                 {ROW_META.map(({ key, label, isPercent }) => {
-                  const vA = dataA?.kpis[key] ?? null;
-                  const vB = dataB?.kpis[key] ?? null;
+                  const vA = dataA?.kpis?.[key] ?? null;
+                  const vB = dataB?.kpis?.[key] ?? null;
                   const loading = loadingA || loadingB;
 
                   const diff    = vA !== null && vB !== null ? vA - vB : null;
@@ -576,18 +587,18 @@ export default function PoredjenjaPage() {
                   );
                 })}
               </tbody>
-              {/* Days with data row */}
+              {/* Latest report date row */}
               {(dataA || dataB) && (
                 <tfoot>
                   <tr style={{ background: "#f9fafb" }}>
                     <td style={{ padding: "8px 20px", fontSize: 11, color: "#9ca3af", fontStyle: "italic" }}>
-                      Dana s podacima
+                      Poslednji izveštaj
                     </td>
                     <td style={{ padding: "8px 16px", textAlign: "right", fontSize: 11, color: "#9ca3af" }}>
-                      {dataA ? dataA.daysWithData : "—"}
+                      {dataA?.reportDate ? formatDateSr(dataA.reportDate) : "—"}
                     </td>
                     <td style={{ padding: "8px 16px", textAlign: "right", fontSize: 11, color: "#9ca3af" }}>
-                      {dataB ? dataB.daysWithData : "—"}
+                      {dataB?.reportDate ? formatDateSr(dataB.reportDate) : "—"}
                     </td>
                     <td />
                   </tr>
@@ -612,6 +623,8 @@ export default function PoredjenjaPage() {
               month={monthA}
               weatherDays={weatherA.days}
               weatherStatus={weatherA.status}
+              historicalSummary={historicalA.summary}
+              historicalStatus={historicalA.status}
             />
             <ContextCard
               color="#a855f7"
@@ -621,6 +634,8 @@ export default function PoredjenjaPage() {
               month={monthB}
               weatherDays={weatherB.days}
               weatherStatus={weatherB.status}
+              historicalSummary={historicalB.summary}
+              historicalStatus={historicalB.status}
             />
           </div>
 

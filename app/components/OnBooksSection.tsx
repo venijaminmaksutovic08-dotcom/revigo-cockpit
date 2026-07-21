@@ -6,7 +6,7 @@ import {
   formatDateSr,
   fetchOnBooksForDate,
   fetchOnBooksLastYear,
-  fetchPeriodAggregate,
+  fetchLatestMonthSnapshot,
   getOnBooksStayMonths,
   getCurrentMonthDef,
   toISO,
@@ -14,7 +14,7 @@ import {
   shiftYears,
   type OnBooksMonthInput,
   type StayMonthDef,
-  type PeriodAggregate,
+  type CurrentMonthSnapshot,
 } from "../lib/dashboardData";
 import type { OnBooksSnapshotRow } from "../lib/supabaseClient";
 
@@ -30,8 +30,8 @@ function fmtPct(n: number): string { return `${(Math.round(n * 10) / 10).toLocal
 
 interface MonthCardData {
   def: StayMonthDef;
-  current: OnBooksMonthInput;
-  lastYear: OnBooksSnapshotRow | null;
+  current: Pick<OnBooksMonthInput, "roomsOnbooks" | "revenueOnbooks" | "occupancyOnbooks">;
+  lastYear: Pick<OnBooksSnapshotRow, "rooms_onbooks" | "revenue_onbooks" | "occupancy_onbooks"> | null;
 }
 
 function DeltaLine({ label, current, lastYear, formatter }: { label: string; current: number; lastYear: number | null; formatter: (n: number) => string }) {
@@ -57,7 +57,7 @@ function DeltaLine({ label, current, lastYear, formatter }: { label: string; cur
   );
 }
 
-function MonthCard({ data, asOfDate }: { data: MonthCardData; asOfDate: string }) {
+function MonthCard({ data, asOfDate, subtitle }: { data: MonthCardData; asOfDate: string; subtitle?: string }) {
   const { def, current, lastYear } = data;
   return (
     <div
@@ -66,7 +66,7 @@ function MonthCard({ data, asOfDate }: { data: MonthCardData; asOfDate: string }
     >
       <div style={{ fontSize: 14, fontWeight: 800, color: "#111827", marginBottom: 2 }}>{def.label}</div>
       <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 12 }}>
-        On-Books na dan {formatDateSr(asOfDate)}
+        {subtitle ?? `On-Books na dan ${formatDateSr(asOfDate)}`}
       </div>
 
       <div className="flex flex-col gap-2" style={{ marginBottom: 12 }}>
@@ -96,52 +96,14 @@ function MonthCard({ data, asOfDate }: { data: MonthCardData; asOfDate: string }
   );
 }
 
-function ActualsMonthCard({ def, agg, lastYearAgg, asOfDate }: { def: StayMonthDef; agg: PeriodAggregate; lastYearAgg: PeriodAggregate | null; asOfDate: string }) {
-  return (
-    <div
-      className="rounded-xl flex-1"
-      style={{ background: "#ffffff", border: "1px solid rgba(201,168,76,0.35)", boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "16px 18px", minWidth: 0 }}
-    >
-      <div style={{ fontSize: 14, fontWeight: 800, color: "#111827", marginBottom: 2 }}>{def.label}</div>
-      <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 12 }}>
-        Actuals do {formatDateSr(asOfDate)}
-      </div>
-
-      <div className="flex flex-col gap-2" style={{ marginBottom: 12 }}>
-        <div className="flex items-center justify-between">
-          <span style={{ fontSize: 12, color: "#6b7280" }}>Noćenja (MTD)</span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{fmtInt(agg.brojNocenja)}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span style={{ fontSize: 12, color: "#6b7280" }}>Prihod (MTD)</span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{fmtRSD(agg.ukupanPrihod)}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span style={{ fontSize: 12, color: "#6b7280" }}>Popunjenost (prosek)</span>
-          <span style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{fmtPct(agg.popunjenost)}</span>
-        </div>
-      </div>
-
-      <div className="flex flex-col gap-1.5" style={{ paddingTop: 10, borderTop: "1px solid #f3f4f6" }}>
-        <div style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>
-          vs isti period lani
-        </div>
-        <DeltaLine label="Noćenja" current={agg.brojNocenja} lastYear={lastYearAgg ? lastYearAgg.brojNocenja : null} formatter={fmtInt} />
-        <DeltaLine label="Prihod" current={agg.ukupanPrihod} lastYear={lastYearAgg ? lastYearAgg.ukupanPrihod : null} formatter={fmtRSD} />
-        <DeltaLine label="Popunjenost" current={agg.popunjenost} lastYear={lastYearAgg ? lastYearAgg.popunjenost : null} formatter={fmtPct} />
-      </div>
-    </div>
-  );
-}
-
 export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBooksSectionProps) {
   const [months, setMonths] = useState<MonthCardData[] | null>(null);
-  const [currentAgg, setCurrentAgg] = useState<PeriodAggregate | null>(null);
-  const [currentLastYearAgg, setCurrentLastYearAgg] = useState<PeriodAggregate | null>(null);
+  const [currentSnapshot, setCurrentSnapshot] = useState<CurrentMonthSnapshot | null>(null);
+  const [currentLastYearSnapshot, setCurrentLastYearSnapshot] = useState<CurrentMonthSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!hotelId || !asOfDate) { setMonths(null); setCurrentAgg(null); setCurrentLastYearAgg(null); return; }
+    if (!hotelId || !asOfDate) { setMonths(null); setCurrentSnapshot(null); setCurrentLastYearSnapshot(null); return; }
     let cancelled = false;
     setLoading(true);
 
@@ -151,19 +113,19 @@ export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBook
       const lastYearAsOfDate = shiftYears(asOfDate, -1);
       const lastYearMonthStart = shiftYears(monthStart, -1);
 
-      const [current, stayMonths, currentMonthAgg, currentMonthLastYearAgg] = await Promise.all([
+      const [current, stayMonths, currentMonthSnap, currentMonthLastYearSnap] = await Promise.all([
         fetchOnBooksForDate(hotelId, asOfDate),
         Promise.resolve(getOnBooksStayMonths(asOfDate)),
-        fetchPeriodAggregate(hotelId, monthStart, asOfDate),
-        fetchPeriodAggregate(hotelId, lastYearMonthStart, lastYearAsOfDate),
+        fetchLatestMonthSnapshot(hotelId, monthStart, asOfDate),
+        fetchLatestMonthSnapshot(hotelId, lastYearMonthStart, lastYearAsOfDate),
       ]);
       const lastYearRows = await Promise.all(
         stayMonths.map(def => fetchOnBooksLastYear(hotelId, asOfDate, def.month, def.year))
       );
       if (cancelled) return;
       setMonths(stayMonths.map((def, i) => ({ def, current: current[i], lastYear: lastYearRows[i] })));
-      setCurrentAgg(currentMonthAgg);
-      setCurrentLastYearAgg(currentMonthLastYearAgg);
+      setCurrentSnapshot(currentMonthSnap);
+      setCurrentLastYearSnapshot(currentMonthLastYearSnap);
       setLoading(false);
     })();
 
@@ -179,7 +141,7 @@ export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBook
         </div>
       </div>
 
-      {loading || !months || !currentAgg ? (
+      {loading || !months || !currentSnapshot ? (
         <div
           className="rounded-xl flex items-center justify-center"
           style={{ minHeight: 100, background: "#ffffff", border: "1px solid #e5e7eb" }}
@@ -188,7 +150,25 @@ export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBook
         </div>
       ) : (
         <div className="flex flex-col md:flex-row gap-4">
-          <ActualsMonthCard def={getCurrentMonthDef(asOfDate)} agg={currentAgg} lastYearAgg={currentLastYearAgg} asOfDate={asOfDate} />
+          <MonthCard
+            data={{
+              def: getCurrentMonthDef(asOfDate),
+              current: {
+                roomsOnbooks: currentSnapshot.roomsOnbooks,
+                revenueOnbooks: currentSnapshot.revenueOnbooks,
+                occupancyOnbooks: currentSnapshot.occupancyOnbooks,
+              },
+              lastYear: currentLastYearSnapshot?.reportDate
+                ? {
+                    rooms_onbooks: currentLastYearSnapshot.roomsOnbooks,
+                    revenue_onbooks: currentLastYearSnapshot.revenueOnbooks,
+                    occupancy_onbooks: currentLastYearSnapshot.occupancyOnbooks,
+                  }
+                : null,
+            }}
+            asOfDate={asOfDate}
+            subtitle={currentSnapshot.reportDate ? `Actuals na dan ${formatDateSr(currentSnapshot.reportDate)}` : "Nema podataka"}
+          />
           {months.map(m => <MonthCard key={`${m.def.year}-${m.def.month}`} data={m} asOfDate={asOfDate} />)}
         </div>
       )}
