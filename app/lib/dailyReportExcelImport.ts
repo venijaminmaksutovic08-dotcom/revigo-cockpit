@@ -2,10 +2,17 @@ import * as XLSX from "xlsx";
 import { MONTHS_SR, emptyEntryData, type EntryData } from "../context/HotelContext";
 
 // Parses the wide "Daily report" pace-report layout: for each calendar month (Jan-Dec) a section
-// of 5 metric rows (Room Nights, Total Revenue, ADR, % Occ., RevPAR), each with 4 data columns
-// (Total Last Year, Same Day Last Year, Today, Target). This is a different shape from the
-// per-date CSV import in reportImport.ts — one row per metric grouped by month, not one row per
-// date — so it needs its own column/row detection rather than sheet_to_json's header-per-row model.
+// of 5 metric rows (Room Nights, Room Revenue, ADR, % Occ., RevPAR). This is a different shape
+// from the per-date CSV import in reportImport.ts — one row per metric grouped by month, not one
+// row per date.
+//
+// Column positions are FIXED, verified against a real export, and are read by index rather than
+// by header text — this sheet's headers are unreliable (merged cells, comparison columns like
+// "Today vs Target" that collide with substring header-matching, inconsistent wording across
+// exports), so header detection has repeatedly misread the wrong column. Position never lies:
+//   0: month name        1: metric name         2: Total Last Year   3: Same Day Last Year
+//   4: Month Opening (unused)   5: Yesterday (unused)   6: TODAY   7: Pickup (unused)   8: TARGET
+// Columns after 8 (Today vs Target, Today vs Last Year, Achievements) are derived and ignored.
 
 export interface MetricColumnValues {
   totalLastYear: number;
@@ -36,7 +43,7 @@ type MetricRowKey = "roomNights" | "revenue" | "adr" | "occupancy" | "revpar";
 
 const METRIC_KEYWORDS: Record<MetricRowKey, string[]> = {
   roomNights: ["room nights", "room night", "nocenja", "sobe"],
-  revenue: ["total revenue", "room revenue", "prihod"],
+  revenue: ["room revenue", "total revenue", "prihod"],
   adr: ["adr"],
   occupancy: ["occ", "popunjenost"],
   revpar: ["revpar"],
@@ -56,6 +63,17 @@ const MONTH_KEYWORDS: string[][] = [
   ["november", "novembar"],
   ["december", "decembar"],
 ];
+
+const ENGLISH_MONTH_NAMES = [
+  "January", "February", "March", "April", "May", "June",
+  "July", "August", "September", "October", "November", "December",
+];
+
+// Fixed 0-based column indices — see module comment for the verified layout.
+const COL_TOTAL_LAST_YEAR = 2;
+const COL_SAME_DAY_LAST_YEAR = 3;
+const COL_TODAY = 6;
+const COL_TARGET = 8;
 
 function normalizeCell(value: unknown): string {
   return String(value ?? "")
@@ -107,41 +125,14 @@ function emptyMonthMetrics(monthNumber: number): ParsedMonthMetrics {
   };
 }
 
-interface ColumnIndexes {
-  totalLastYear?: number;
-  sameDayLastYear?: number;
-  today?: number;
-  target?: number;
-}
-
-function findHeaderRow(raw: unknown[][]): { rowIndex: number; cols: ColumnIndexes } | null {
-  for (let r = 0; r < raw.length; r++) {
-    const row = raw[r] ?? [];
-    const cols: ColumnIndexes = {};
-    for (let c = 0; c < row.length; c++) {
-      const norm = normalizeCell(row[c]);
-      if (!norm) continue;
-      // Comparison/delta columns ("Today vs Target", "Today vs Last Year") contain "today" and
-      // "target" as substrings too — skip them so they don't clobber the plain Today/Target columns.
-      if (norm.includes(" vs ")) continue;
-      if (norm.includes("same day last year")) cols.sameDayLastYear = c;
-      else if (norm.includes("total last year")) cols.totalLastYear = c;
-      else if (norm === "today" || norm.includes("today")) cols.today = c;
-      else if (norm === "target" || norm.includes("target")) cols.target = c;
-    }
-    if (cols.today !== undefined && cols.target !== undefined) {
-      return { rowIndex: r, cols };
-    }
-  }
-  return null;
-}
-
-function readMetricValues(row: unknown[], cols: ColumnIndexes): MetricColumnValues {
+// Fixed-position read — index 6 is always Today and index 8 is always Target, regardless of
+// whatever text (if any) appears in a header row. Never derive these from column headers.
+function readMetricValuesFixed(row: unknown[]): MetricColumnValues {
   return {
-    totalLastYear: cols.totalLastYear !== undefined ? toNumber(row[cols.totalLastYear]) : 0,
-    sameDayLastYear: cols.sameDayLastYear !== undefined ? toNumber(row[cols.sameDayLastYear]) : 0,
-    today: cols.today !== undefined ? toNumber(row[cols.today]) : 0,
-    target: cols.target !== undefined ? toNumber(row[cols.target]) : 0,
+    totalLastYear: toNumber(row[COL_TOTAL_LAST_YEAR]),
+    sameDayLastYear: toNumber(row[COL_SAME_DAY_LAST_YEAR]),
+    today: toNumber(row[COL_TODAY]),
+    target: toNumber(row[COL_TARGET]),
   };
 }
 
@@ -172,39 +163,46 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
     return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
   }
 
-  const header = findHeaderRow(raw);
-  if (!header) {
-    return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
-  }
-
+  // No header-row detection at all: column 0 identifies the current month section, column 1
+  // identifies a metric row within it, and once inside a month every value is read from its fixed
+  // column position. currentMonth carries forward across rows where column 0 is blank (a month's
+  // own metric rows may or may not repeat the month name in column 0 — either way works, since we
+  // only ever update currentMonth when column 0 actually matches one).
   const monthsMap = new Map<number, ParsedMonthMetrics>();
   let currentMonth: number | null = null;
 
-  for (let r = header.rowIndex + 1; r < raw.length; r++) {
+  for (let r = 0; r < raw.length; r++) {
     const row = raw[r] ?? [];
-    const label = normalizeCell(row[0]);
-    if (!label) continue;
 
-    const monthNum = matchMonth(label);
+    const monthNum = matchMonth(normalizeCell(row[0]));
     if (monthNum) {
       currentMonth = monthNum;
       if (!monthsMap.has(monthNum)) monthsMap.set(monthNum, emptyMonthMetrics(monthNum));
-      continue;
     }
 
     if (currentMonth === null) continue;
 
-    const metricKey = matchMetric(label);
+    const metricKey = matchMetric(normalizeCell(row[1]));
     if (!metricKey) continue;
 
     const entry = monthsMap.get(currentMonth) ?? emptyMonthMetrics(currentMonth);
-    entry[metricKey] = readMetricValues(row, header.cols);
+    entry[metricKey] = readMetricValuesFixed(row);
     monthsMap.set(currentMonth, entry);
   }
 
   const months = Array.from(monthsMap.values()).sort((a, b) => a.monthNumber - b.monthNumber);
   if (months.length === 0) {
     return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
+  }
+
+  // Verification logging for the fixed-position rewrite — confirms the Today column (index 6)
+  // landed on the right cell for whichever months this file actually contains.
+  for (const m of months) {
+    const name = ENGLISH_MONTH_NAMES[m.monthNumber - 1];
+    const occPct = m.occupancy.today !== 0 && Math.abs(m.occupancy.today) <= 1 ? m.occupancy.today * 100 : m.occupancy.today;
+    console.log(
+      `${name} Today values: rooms=${m.roomNights.today}, revenue=${m.revenue.today}, adr=${m.adr.today}, occ=${occPct}, revpar=${m.revpar.today}`
+    );
   }
 
   return { months, sheetFound: true, error: null };
