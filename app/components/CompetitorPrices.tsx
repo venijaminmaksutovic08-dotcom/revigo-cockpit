@@ -4,9 +4,19 @@ import { useEffect, useState, useCallback } from "react";
 import { Building2, Plus, Trash2, RefreshCw, ExternalLink, Star, Check } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 import { useHotel } from "../context/HotelContext";
+import { getEurRsdRate, formatEur } from "../lib/fxRate";
 import type { CompetitorResult } from "../api/competitors/route";
 
+type Currency = "EUR" | "RSD";
+
 function fmtRSD(n: number): string { return `${Math.round(n).toLocaleString("sr-RS")} RSD`; }
+
+// Competitor prices from SerpAPI are fetched in RSD (see api/competitors/route.ts) — this is
+// DISPLAY ONLY, converting to EUR for the list; the raw RSD value is never changed or re-stored.
+function competitorPriceLabel(r: CompetitorResult, rate: number | null): string {
+  if (r.priceExtracted != null && rate) return formatEur(r.priceExtracted, rate);
+  return r.priceFormatted;
+}
 
 interface CompetitorRow {
   id: string;
@@ -34,7 +44,7 @@ function formatCheckin(checkin: string): string {
 
 // ── sub-components ────────────────────────────────────────────────────────────
 
-function ResultCard({ r }: { r: CompetitorResult }) {
+function ResultCard({ r, rate }: { r: CompetitorResult; rate: number | null }) {
   return (
     <div
       className="flex items-start justify-between gap-3"
@@ -70,7 +80,7 @@ function ResultCard({ r }: { r: CompetitorResult }) {
         </div>
       </div>
       <div className="flex flex-col items-end gap-1" style={{ flexShrink: 0 }}>
-        <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{r.priceFormatted}</div>
+        <div style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{competitorPriceLabel(r, rate)}</div>
         <div style={{ fontSize: 10, color: "#9ca3af" }}>/ noć</div>
         {r.link && (
           <a
@@ -95,13 +105,25 @@ export default function CompetitorPrices() {
   const hotel = hotels.find(h => h.id === selectedHotel) ?? null;
   const city  = hotel?.city ?? "";
 
-  // Own price
+  // Daily EUR->RSD rate — display only, fetched once (see lib/fxRate.ts for its own caching).
+  const [fxRate, setFxRate] = useState<number | null>(null);
+  useEffect(() => {
+    getEurRsdRate().then(setFxRate);
+  }, []);
+
+  // Own price — the input/display currency is just a UI toggle; the DB always stores RSD.
+  const [currency, setCurrency] = useState<Currency>("EUR");
   const [priceInput, setPriceInput] = useState("");
   const [savingPrice, setSavingPrice] = useState(false);
 
   useEffect(() => {
-    setPriceInput(hotel?.currentPrice != null ? String(hotel.currentPrice) : "");
-  }, [hotel?.id, hotel?.currentPrice]);
+    if (hotel?.currentPrice == null) { setPriceInput(""); return; }
+    if (currency === "RSD") {
+      setPriceInput(String(hotel.currentPrice));
+    } else if (fxRate) {
+      setPriceInput(String(Math.round(hotel.currentPrice / fxRate)));
+    }
+  }, [hotel?.id, hotel?.currentPrice, currency, fxRate]);
 
   const saveOwnPrice = useCallback(async () => {
     if (!selectedHotel || savingPrice) return;
@@ -109,11 +131,14 @@ export default function CompetitorPrices() {
     if (!priceInput.trim() || Number.isNaN(parsed) || parsed < 0) return;
     setSavingPrice(true);
     try {
-      await updateHotelPrice(selectedHotel, parsed);
+      // Entry currency is just how the manager typed the number — convert to RSD before saving,
+      // exactly like today's RSD-only save, so the stored value never changes shape.
+      const rsdValue = currency === "EUR" ? Math.round(parsed * (await getEurRsdRate())) : parsed;
+      await updateHotelPrice(selectedHotel, rsdValue);
     } finally {
       setSavingPrice(false);
     }
-  }, [selectedHotel, priceInput, savingPrice, updateHotelPrice]);
+  }, [selectedHotel, priceInput, savingPrice, updateHotelPrice, currency]);
 
   // Saved competitors
   const [competitors, setCompetitors] = useState<CompetitorRow[]>([]);
@@ -241,12 +266,35 @@ export default function CompetitorPrices() {
                 🏨 {hotel?.name ?? "Naš hotel"} (naš hotel)
               </div>
               <div style={{ fontSize: 18, fontWeight: 800, color: "#111827", marginTop: 2 }}>
-                {hotel?.currentPrice != null ? fmtRSD(hotel.currentPrice) : "Cena nije uneta"}
+                {hotel?.currentPrice == null
+                  ? "Cena nije uneta"
+                  : currency === "EUR" && fxRate
+                    ? formatEur(hotel.currentPrice, fxRate)
+                    : fmtRSD(hotel.currentPrice)}
               </div>
             </div>
             <div className="flex items-end gap-2">
               <div>
-                <div style={{ fontSize: 10, fontWeight: 600, color: "#92400e", marginBottom: 4 }}>Naša cena za noć</div>
+                <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+                  <span style={{ fontSize: 10, fontWeight: 600, color: "#92400e" }}>Naša cena za noć</span>
+                  <div className="flex items-center" style={{ borderRadius: 6, border: "1px solid rgba(201,168,76,0.35)", overflow: "hidden" }}>
+                    {(["EUR", "RSD"] as const).map(cur => (
+                      <button
+                        key={cur}
+                        type="button"
+                        onClick={() => setCurrency(cur)}
+                        style={{
+                          height: 18, padding: "0 6px", border: "none",
+                          background: currency === cur ? "#C9A84C" : "transparent",
+                          color: currency === cur ? "#ffffff" : "#92400e",
+                          fontSize: 9, fontWeight: 700, cursor: "pointer",
+                        }}
+                      >
+                        {cur}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 <div className="flex items-center gap-2">
                   <input
                     type="number"
@@ -254,14 +302,14 @@ export default function CompetitorPrices() {
                     value={priceInput}
                     onChange={e => setPriceInput(e.target.value)}
                     onKeyDown={e => { if (e.key === "Enter") saveOwnPrice(); }}
-                    placeholder="npr. 8500"
+                    placeholder={currency === "EUR" ? "npr. 72" : "npr. 8500"}
                     style={{
                       width: 110, height: 34, borderRadius: 7,
                       border: "1px solid rgba(201,168,76,0.4)", paddingLeft: 10, paddingRight: 10,
                       fontSize: 13, color: "#111827", background: "#ffffff", outline: "none",
                     }}
                   />
-                  <span style={{ fontSize: 12, color: "#92400e" }}>RSD</span>
+                  <span style={{ fontSize: 12, color: "#92400e" }}>{currency === "EUR" ? "€" : "RSD"}</span>
                   <button
                     onClick={saveOwnPrice}
                     disabled={savingPrice || !priceInput.trim()}
@@ -312,7 +360,7 @@ export default function CompetitorPrices() {
                 Cene za {formatCheckin(marketCheckin)} — {city}
               </div>
               <div className="flex flex-col gap-2">
-                {marketResults.map(r => <ResultCard key={r.name} r={r} />)}
+                {marketResults.map(r => <ResultCard key={r.name} r={r} rate={fxRate} />)}
               </div>
             </>
           )}
@@ -421,7 +469,7 @@ export default function CompetitorPrices() {
               {/* Results for this competitor */}
               {compResults[comp.id]?.length > 0 && (
                 <div className="flex flex-col gap-2 pl-2">
-                  {compResults[comp.id].map(r => <ResultCard key={r.name} r={r} />)}
+                  {compResults[comp.id].map(r => <ResultCard key={r.name} r={r} rate={fxRate} />)}
                 </div>
               )}
               {!compLoading[comp.id] && compResults[comp.id]?.length === 0 && comp.id in compResults && (
