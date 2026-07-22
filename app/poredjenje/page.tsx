@@ -9,7 +9,7 @@ import { useHotel, MONTHS_SR, type RowKey } from "../context/HotelContext";
 import { supabase } from "../lib/supabaseClient";
 import { useWeatherForecast } from "../hooks/useWeatherForecast";
 import { useHistoricalWeather } from "../hooks/useHistoricalWeather";
-import { fetchLatestReportSnapshot, formatDateSr } from "../lib/dashboardData";
+import { fetchLatestReportSnapshot, formatDateSr, shiftYears } from "../lib/dashboardData";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -33,10 +33,14 @@ interface PeriodKpis { brojNocenja: number; ukupanPrihod: number; adr: number; p
 interface EventItem  { title: string; url: string; domain: string }
 
 interface PeriodData {
-  kpis:       PeriodKpis | null;
-  reportDate: string | null;
-  notes:      string | null;
-  events:     EventItem[];
+  kpis:           PeriodKpis | null;
+  reportDate:     string | null;
+  notes:          string | null;
+  events:         EventItem[];
+  // True when kpis came from the primary period's own "same day last year" on-books figure
+  // (a pace snapshot as of one specific date) rather than this period's own real daily_reports
+  // rows — the UI must label this distinctly, since it is NOT last year's final month total.
+  isPaceFallback: boolean;
 }
 
 // ── Formatting ─────────────────────────────────────────────────────────────────
@@ -111,6 +115,7 @@ async function fetchPeriodData(
     reportDate: snapshot?.reportDate ?? null,
     notes,
     events,
+    isPaceFallback: false,
   };
 }
 
@@ -373,12 +378,49 @@ export default function PoredjenjaPage() {
     if (!hotelB) { setDataB(null); return; }
     let cancelled = false;
     setLoadingB(true);
-    fetchPeriodData(hotelB, cityB, yearB, monthB)
-      .then(d => { if (!cancelled) setDataB(d); })
-      .catch(() => { if (!cancelled) setDataB(null); })
-      .finally(() => { if (!cancelled) setLoadingB(false); });
+
+    // Same-hotel, exact-prior-year comparison (the page's default/typical use) falls back to the
+    // primary period's own "same_day_last_year" figure when Period B has no real rows of its own —
+    // that comparison-year row may genuinely not exist yet even though this year's data does. This
+    // is a single pace snapshot (on-books as of one specific date last year), the same source and
+    // semantics as the Dashboard's On-Books YoY card — never a sum across days (see Fix history:
+    // that field is itself a running monthly total per row, so summing it double-counts).
+    const isDirectYoY = hotelB === hotelA && yearB === yearA - 1 && monthB === monthA;
+
+    (async () => {
+      const d = await fetchPeriodData(hotelB, cityB, yearB, monthB);
+      if (cancelled) return;
+
+      if (d.kpis === null && isDirectYoY) {
+        const { start, end } = monthDateRange(yearA, monthA);
+        const snap = await fetchLatestReportSnapshot(hotelA, start, end);
+        if (cancelled) return;
+        if (snap) {
+          setDataB({
+            ...d,
+            kpis: {
+              brojNocenja: snap.brojNocenjaLY,
+              ukupanPrihod: snap.ukupanPrihodLY,
+              adr: snap.adrLY,
+              popunjenost: snap.popunjenostLY,
+              revpar: snap.revparLY,
+            },
+            // The LY figure is "as of" the equivalent date one year earlier than the primary
+            // period's own latest report date.
+            reportDate: shiftYears(snap.reportDate, -1),
+            isPaceFallback: true,
+          });
+          setLoadingB(false);
+          return;
+        }
+      }
+
+      setDataB(d);
+      setLoadingB(false);
+    })().catch(() => { if (!cancelled) { setDataB(null); setLoadingB(false); } });
+
     return () => { cancelled = true; };
-  }, [hotelB, cityB, yearB, monthB]);
+  }, [hotelB, cityB, yearB, monthB, hotelA, yearA, monthA]);
 
   // ── Insight text ────────────────────────────────────────────────────────────
   const insight = useMemo<string | null>(() => {
@@ -505,10 +547,24 @@ export default function PoredjenjaPage() {
                       : ""}
                   </th>
                   <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 10, fontWeight: 700, color: "#a855f7", letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid #e5e7eb" }}>
-                    {periodLabel(monthB, yearB)}
-                    {hotels.find(h => h.id === hotelB) && hotelA !== hotelB
-                      ? ` · ${hotels.find(h => h.id === hotelB)!.name}`
-                      : ""}
+                    <div>
+                      {periodLabel(monthB, yearB)}
+                      {hotels.find(h => h.id === hotelB) && hotelA !== hotelB
+                        ? ` · ${hotels.find(h => h.id === hotelB)!.name}`
+                        : ""}
+                    </div>
+                    {dataB?.isPaceFallback && (
+                      <div
+                        style={{
+                          fontSize: 9, fontWeight: 700, color: "#92400e", textTransform: "none",
+                          letterSpacing: 0, marginTop: 3, display: "inline-block",
+                          background: "rgba(234,179,8,0.12)", border: "1px solid rgba(234,179,8,0.3)",
+                          borderRadius: 4, padding: "2px 6px",
+                        }}
+                      >
+                        📌 na isti dan lani · on-books
+                      </div>
+                    )}
                   </th>
                   <th style={{ padding: "10px 16px", textAlign: "right", fontSize: 10, fontWeight: 700, color: "#9ca3af", letterSpacing: "0.06em", textTransform: "uppercase", borderBottom: "1px solid #e5e7eb", minWidth: 160 }}>
                     Razlika
