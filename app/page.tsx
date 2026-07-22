@@ -21,7 +21,7 @@ import { dailyData, priorityActions, revenueGapData } from "./data/hotelData";
 import { useHotel, MONTHS_SR, ROW_DEFS } from "./context/HotelContext";
 import {
   todayISO, shiftYears, yearMonthOf, daysInMonthOf, dateParts, toISO, formatDateSr,
-  fetchLatestReportDate, fetchDayReport, fetchMonthlyTargetFor, fetchPeriodAggregate, fetchPaceActuals,
+  fetchLatestReportDate, fetchDayReport, fetchMonthlyTargetFor, fetchLatestReportSnapshot, fetchPaceActuals,
   getOnBooksStayMonths, buildDayKpiData, buildDualKpiData, type PeriodAggregate,
 } from "./lib/dashboardData";
 import type { DailyReportRow, MonthlyTargetRow } from "./lib/supabaseClient";
@@ -37,11 +37,11 @@ const KPI_ICON_BY_ROW: Record<string, React.ReactNode> = {
 };
 
 const PERIOD_LABEL_BY_ROW: Record<string, string> = {
-  brojNocenja:  "Noćenja (suma)",
-  ukupanPrihod: "Prihod (suma)",
-  adr:          "ADR (prosek)",
-  popunjenost:  "Popunjenost (prosek)",
-  revpar:       "RevPAR (prosek)",
+  brojNocenja:  "Noćenja",
+  ukupanPrihod: "Prihod",
+  adr:          "ADR",
+  popunjenost:  "Popunjenost",
+  revpar:       "RevPAR",
 };
 
 function fmtRow(key: string, n: number): string {
@@ -143,7 +143,10 @@ export default function DashboardPage() {
     ? buildDualKpiData(dayRow, dayLastYearRow, dayMonthlyTarget, mtdAgg, daysInMonthOf(selectedDate))
     : [];
 
-  // ── Period mode: sum/average over a date range ──────────────────────────────────────────────
+  // ── Period mode: latest on-books snapshot within the selected range ─────────────────────────
+  // Never a sum/average across days — each day's row is already a cumulative month-to-date
+  // total, so the latest one already reflects everything the earlier ones did (see the /mesecni
+  // "Ukupan Prihod" bug fix, same pattern).
   const [periodAgg, setPeriodAgg]         = useState<PeriodAggregate | null>(null);
   const [periodLoading, setPeriodLoading] = useState(false);
 
@@ -151,9 +154,16 @@ export default function DashboardPage() {
     if (!selectedHotel || mode !== "period") return;
     let cancelled = false;
     setPeriodLoading(true);
-    fetchPeriodAggregate(selectedHotel, rangeStart, rangeEnd).then(agg => {
+    fetchLatestReportSnapshot(selectedHotel, rangeStart, rangeEnd).then(snap => {
       if (cancelled) return;
-      setPeriodAgg(agg);
+      setPeriodAgg(snap ? {
+        brojNocenja: snap.brojNocenja,
+        ukupanPrihod: snap.ukupanPrihod,
+        adr: snap.adr,
+        popunjenost: snap.popunjenost,
+        revpar: snap.revpar,
+        daysWithData: 1,
+      } : null);
       setPeriodLoading(false);
     });
     return () => { cancelled = true; };

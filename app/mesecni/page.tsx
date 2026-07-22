@@ -229,10 +229,10 @@ export default function MesecniPage() {
       return kpiData[idx] as SummaryCardKpi | undefined;
     };
     const specs: { key: string; label: string; icon: React.ReactNode }[] = [
-      { key: "ukupanPrihod", label: "Ukupan Prihod", icon: <DollarSign size={14} color="#374151" /> },
-      { key: "popunjenost", label: "Prosečna Popunjenost", icon: <Percent size={14} color="#374151" /> },
-      { key: "adr", label: "Prosečan ADR", icon: <Receipt size={14} color="#374151" /> },
-      { key: "revpar", label: "Prosečan RevPAR", icon: <TrendingUp size={14} color="#374151" /> },
+      { key: "ukupanPrihod", label: "Prihod", icon: <DollarSign size={14} color="#374151" /> },
+      { key: "popunjenost", label: "Popunjenost", icon: <Percent size={14} color="#374151" /> },
+      { key: "adr", label: "ADR", icon: <Receipt size={14} color="#374151" /> },
+      { key: "revpar", label: "RevPAR", icon: <TrendingUp size={14} color="#374151" /> },
     ];
     return specs
       .map(spec => ({ ...spec, kpi: byKey(spec.key) }))

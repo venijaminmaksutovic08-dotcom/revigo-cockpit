@@ -199,45 +199,23 @@ export function getDayStatus(entry: EntryData | undefined | null): DayStatus {
   return "red";
 }
 
-// Aggregates daily entries into a single summary row.
-// Room Nights and Revenue are summed; ADR is derived from those sums.
-// Occupancy and RevPAR use the values the user directly entered in the daily form
-// (averaged across days with a non-zero entry). This avoids a dependency on the hotel's
-// room count being perfectly accurate and ensures the KPI dashboard matches what users see
-// when they enter data.
-function aggregateEntries(entries: EntryData[], _rooms: number, _availableDays: number): { data: EntryData; hasAny: boolean } {
-  const data = emptyEntryData();
-  if (entries.length === 0) return { data, hasAny: false };
+// A row counts as an anomalous placeholder (not a real report) when every "on the books today"
+// field is zero — e.g. a report date that got an empty row instead of no row at all. Real data
+// never legitimately zeroes out mid-month since each row is a cumulative month-to-date total.
+function isAllZeroToday(entry: EntryData): boolean {
+  return ROW_DEFS.every(rowDef => entry[rowDef.key].naKnjigamaDanas === 0);
+}
 
-  for (const col of COLUMN_DEFS) {
-    let brojNocenjaSum = 0;
-    let ukupanPrihodSum = 0;
-    let popunjenostSum = 0;
-    let popunjenostCount = 0;
-    let revparSum = 0;
-    let revparCount = 0;
-
-    for (const entry of entries) {
-      brojNocenjaSum += entry.brojNocenja[col.key];
-      ukupanPrihodSum += entry.ukupanPrihod[col.key];
-      if (entry.popunjenost[col.key] !== 0) {
-        popunjenostSum += entry.popunjenost[col.key];
-        popunjenostCount++;
-      }
-      if (entry.revpar[col.key] !== 0) {
-        revparSum += entry.revpar[col.key];
-        revparCount++;
-      }
-    }
-
-    data.brojNocenja[col.key] = brojNocenjaSum;
-    data.ukupanPrihod[col.key] = ukupanPrihodSum;
-    data.adr[col.key] = brojNocenjaSum > 0 ? ukupanPrihodSum / brojNocenjaSum : 0;
-    data.popunjenost[col.key] = popunjenostCount > 0 ? popunjenostSum / popunjenostCount : 0;
-    data.revpar[col.key] = revparCount > 0 ? revparSum / revparCount : 0;
-  }
-
-  return { data, hasAny: true };
+// Picks the on-books picture as of the latest report date among the given dated entries — never
+// a sum or average across days. Each day's own values already ARE a cumulative month-to-date
+// total (see the /mesecni "Ukupan Prihod" bug: summing them inflated revenue ~14.6x), so the
+// newest real row already contains everything the older rows contained plus more. Same pattern as
+// dashboardData.ts's fetchLatestReportSnapshot/fetchLatestMonthSnapshot.
+function latestEntry(dated: [string, EntryData][]): { data: EntryData; hasAny: boolean } {
+  const sorted = [...dated].sort((a, b) => b[0].localeCompare(a[0])); // newest report_date first
+  const found = sorted.find(([, entry]) => !isAllZeroToday(entry));
+  if (!found) return { data: emptyEntryData(), hasAny: false };
+  return { data: found[1], hasAny: true };
 }
 
 export interface MonthlyTargetsInput {
@@ -491,16 +469,14 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
   );
 
   const kpiData = useMemo<KPIData[]>(() => {
-    const rooms = selectedHotelObj?.rooms ?? 0;
     const mtdDayCount = monthInfo ? getMtdDayCount(monthInfo) : 0;
 
     // Only count days that have actually elapsed (current month: up to yesterday; past month: the whole
     // month) — never let a partial current month be diluted by entries for days that haven't happened yet.
     const mtdEntries = Object.entries(monthEntries)
-      .filter(([dateISO]) => Number(dateISO.slice(8, 10)) <= mtdDayCount)
-      .map(([, entry]) => entry);
+      .filter(([dateISO]) => Number(dateISO.slice(8, 10)) <= mtdDayCount);
 
-    const { data: aggregated, hasAny } = aggregateEntries(mtdEntries, rooms, mtdDayCount);
+    const { data: aggregated, hasAny } = latestEntry(mtdEntries);
     const hasTarget = Boolean(monthlyTarget);
 
     return ROW_DEFS.map(rowDef => {
@@ -541,7 +517,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
         yoyChangePct,
       } as KPIData & { pickup: number };
     });
-  }, [monthEntries, selectedHotelObj, monthInfo, monthlyTarget]);
+  }, [monthEntries, monthInfo, monthlyTarget]);
 
   const saveNotes = useCallback(
     async (notes: string) => {
