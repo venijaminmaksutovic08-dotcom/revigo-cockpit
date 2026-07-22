@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { MONTHS_SR, emptyEntryData, type EntryData } from "../context/HotelContext";
 
 // Parses the wide "Daily report" pace-report layout: for each calendar month (Jan-Dec) a section
 // of 5 metric rows (Room Nights, Total Revenue, ADR, % Occ., RevPAR), each with 4 data columns
@@ -24,6 +25,10 @@ export interface ParsedMonthMetrics {
 
 export interface ParseDailyReportResult {
   months: ParsedMonthMetrics[];
+  // Whether a "Daily report" sheet was located at all — lets callers distinguish "this isn't that
+  // kind of file" (fall back to another parser) from "it's that kind of file but something's wrong
+  // with it" (surface the error).
+  sheetFound: boolean;
   error: string | null;
 }
 
@@ -116,6 +121,9 @@ function findHeaderRow(raw: unknown[][]): { rowIndex: number; cols: ColumnIndexe
     for (let c = 0; c < row.length; c++) {
       const norm = normalizeCell(row[c]);
       if (!norm) continue;
+      // Comparison/delta columns ("Today vs Target", "Today vs Last Year") contain "today" and
+      // "target" as substrings too — skip them so they don't clobber the plain Today/Target columns.
+      if (norm.includes(" vs ")) continue;
       if (norm.includes("same day last year")) cols.sameDayLastYear = c;
       else if (norm.includes("total last year")) cols.totalLastYear = c;
       else if (norm === "today" || norm.includes("today")) cols.today = c;
@@ -139,7 +147,7 @@ function readMetricValues(row: unknown[], cols: ColumnIndexes): MetricColumnValu
 
 export async function parseDailyReportExcel(file: File): Promise<ParseDailyReportResult> {
   if (!file.name.toLowerCase().endsWith(".xlsx")) {
-    return { months: [], error: "Pogrešan format fajla. Očekuje se .xlsx" };
+    return { months: [], sheetFound: false, error: "Pogrešan format fajla. Očekuje se .xlsx" };
   }
 
   let workbook: XLSX.WorkBook;
@@ -147,13 +155,13 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
     const buffer = await file.arrayBuffer();
     workbook = XLSX.read(buffer, { type: "array", cellDates: true });
   } catch {
-    return { months: [], error: "Pogrešan format fajla. Očekuje se .xlsx" };
+    return { months: [], sheetFound: false, error: "Pogrešan format fajla. Očekuje se .xlsx" };
   }
 
   let sheetName = workbook.SheetNames.find(n => normalizeCell(n) === "daily report");
   if (!sheetName) sheetName = workbook.SheetNames.find(n => normalizeCell(n).includes("daily report"));
   if (!sheetName) {
-    return { months: [], error: "Sheet 'Daily report' nije pronađen u fajlu." };
+    return { months: [], sheetFound: false, error: "Sheet 'Daily report' nije pronađen u fajlu." };
   }
 
   let raw: unknown[][];
@@ -161,12 +169,12 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
     const sheet = workbook.Sheets[sheetName];
     raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
   } catch {
-    return { months: [], error: "Nisu pronađeni podaci za uvoz." };
+    return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
   }
 
   const header = findHeaderRow(raw);
   if (!header) {
-    return { months: [], error: "Nisu pronađeni podaci za uvoz." };
+    return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
   }
 
   const monthsMap = new Map<number, ParsedMonthMetrics>();
@@ -196,8 +204,66 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
 
   const months = Array.from(monthsMap.values()).sort((a, b) => a.monthNumber - b.monthNumber);
   if (months.length === 0) {
-    return { months: [], error: "Nisu pronađeni podaci za uvoz." };
+    return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
   }
 
-  return { months, error: null };
+  return { months, sheetFound: true, error: null };
+}
+
+// Normalizes a raw occupancy cell to a percent — the sheet may store it as a decimal fraction
+// (0.55) or already as a percent (55), same ambiguity handled in dashboardData.ts's monthly import.
+function normalizePercent(n: number): number {
+  return n !== 0 && Math.abs(n) <= 1 ? n * 100 : n;
+}
+
+function metricToRowValues(m: MetricColumnValues, isPercent: boolean) {
+  const norm = isPercent ? normalizePercent : (v: number) => v;
+  return {
+    prosleGodine: norm(m.totalLastYear),
+    istiDanProsleGodine: norm(m.sameDayLastYear),
+    naKnjigamaJuce: 0, // not present in this sheet layout — no "Yesterday" column
+    naKnjigamaDanas: norm(m.today),
+    target: norm(m.target),
+  };
+}
+
+// Converts one month's section of the wide "Daily report" sheet into the app's per-date EntryData
+// shape, so it can be saved through the same daily_reports upsert path as a manually entered day.
+export function monthMetricsToEntryData(m: ParsedMonthMetrics): EntryData {
+  const data = emptyEntryData();
+  data.brojNocenja = metricToRowValues(m.roomNights, false);
+  data.ukupanPrihod = metricToRowValues(m.revenue, false);
+  data.adr = metricToRowValues(m.adr, false);
+  data.popunjenost = metricToRowValues(m.occupancy, true);
+  data.revpar = metricToRowValues(m.revpar, false);
+  return data;
+}
+
+export interface ParseSingleMonthResult {
+  // False when the file simply isn't this wide-sheet format — callers should fall back to another
+  // parser rather than surface an error. True (with an error) means the sheet exists but something
+  // about it — or the requested month — couldn't be read, which IS worth surfacing.
+  sheetFound: boolean;
+  data: EntryData | null;
+  error: string | null;
+}
+
+// Single-date import: pull just one month's "Today" column values out of the wide "Daily report"
+// sheet, for the calendar-selected date's month — used by ImportReportModal instead of the
+// generic per-date parser when the uploaded file is this hotel's monthly pace-report export.
+export async function parseDailyReportExcelForMonth(file: File, monthNumber: number): Promise<ParseSingleMonthResult> {
+  const result = await parseDailyReportExcel(file);
+  if (!result.sheetFound) {
+    return { sheetFound: false, data: null, error: null };
+  }
+  if (result.error) {
+    return { sheetFound: true, data: null, error: result.error };
+  }
+
+  const month = result.months.find(mm => mm.monthNumber === monthNumber);
+  if (!month) {
+    return { sheetFound: true, data: null, error: `Mesec "${MONTHS_SR[monthNumber - 1]}" nije pronađen u listu "Daily report" ovog fajla.` };
+  }
+
+  return { sheetFound: true, data: monthMetricsToEntryData(month), error: null };
 }

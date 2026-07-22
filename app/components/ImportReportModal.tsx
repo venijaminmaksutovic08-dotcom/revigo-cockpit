@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { X, FileSpreadsheet, Upload, AlertCircle, CalendarDays } from "lucide-react";
 import { parseReportFile, type ParsedReportRow } from "../lib/reportImport";
+import { parseDailyReportExcelForMonth } from "../lib/dailyReportExcelImport";
 
 interface ImportReportModalProps {
   hotel: string;
@@ -40,6 +41,32 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setFileName(file.name);
     setParsing(true);
     setError(null);
+
+    // Single-date mode: this hotel's real export is the wide "Daily report" sheet (one section per
+    // calendar month, no date column at all) — try that layout first and pull just the selected
+    // date's month. Only fall back to the generic per-date parser below when the file isn't that
+    // format (sheetFound === false); if it IS that format but something's wrong, surface the error
+    // instead of silently trying — and likely failing — the generic parser.
+    if (isSingleDate && fixedDate) {
+      const monthNumber = Number(fixedDate.dateISO.slice(5, 7));
+      const wide = await parseDailyReportExcelForMonth(file, monthNumber);
+      if (wide.data) {
+        setParsing(false);
+        setHadMultipleRows(false);
+        setRows([{ dateISO: fixedDate.dateISO, dateLabel: fixedDate.dateLabel, data: wide.data }]);
+        setMatchedHeaders([]);
+        setDefaultedHeaders([]);
+        setUnmatchedHeaders([]);
+        setStep("preview");
+        return;
+      }
+      if (wide.sheetFound) {
+        setParsing(false);
+        setError(wide.error);
+        return;
+      }
+      // Not a "Daily report" workbook — fall through to the generic per-date parser.
+    }
 
     const result = await parseReportFile(file);
     setParsing(false);
