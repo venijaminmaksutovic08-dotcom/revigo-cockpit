@@ -13,7 +13,7 @@ import {
   type DayStatus,
 } from "../context/HotelContext";
 import type { ParsedReportRow } from "../lib/reportImport";
-import { fetchOnBooksForDate, saveOnBooksForDate, emptyOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
+import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, emptyOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
 
 const WEEKDAYS_SR = ["Pon", "Uto", "Sre", "Čet", "Pet", "Sub", "Ned"];
 
@@ -248,6 +248,7 @@ export default function DataEntryCalendar() {
           onConfirm={async (rows: ParsedReportRow[]) => {
             if (rows.length > 0) {
               await saveEntryForDate(openDate, rows[0].data);
+              if (selectedHotel) await saveMonthlyTargetIfAbsent(selectedHotel, openDate, rows[0].data);
             }
             closeAll();
           }}

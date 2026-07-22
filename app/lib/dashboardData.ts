@@ -8,6 +8,7 @@ import {
   statusFor,
   isAdditiveRow,
   type RowKey,
+  type EntryData,
 } from "../context/HotelContext";
 import type { KPIData, KPIStatus } from "../data/hotelData";
 import type { ParsedMonthMetrics } from "./dailyReportExcelImport";
@@ -102,6 +103,26 @@ export async function fetchMonthlyTargetFor(hotelId: string, yearMonth: string):
     .maybeSingle();
   if (error) { console.error("Failed to load monthly target:", error.message); return null; }
   return data ?? null;
+}
+
+// Populates monthly_targets for an imported entry's month from its own Target column — but only
+// if no target row exists yet, so a target the user already set manually is never silently
+// overwritten by whatever a re-imported report happens to say.
+export async function saveMonthlyTargetIfAbsent(hotelId: string, dateISO: string, data: EntryData): Promise<void> {
+  const yearMonth = yearMonthOf(dateISO);
+  const existing = await fetchMonthlyTargetFor(hotelId, yearMonth);
+  if (existing) return;
+
+  const { error } = await supabase.from("monthly_targets").insert({
+    hotel_id: hotelId,
+    year_month: yearMonth,
+    revenue_target: data.ukupanPrihod.target,
+    room_nights_target: data.brojNocenja.target,
+    adr_target: data.adr.target,
+    occupancy_target: data.popunjenost.target,
+    revpar_target: data.revpar.target,
+  });
+  if (error) console.error("Failed to save monthly target from import:", error.message);
 }
 
 // Builds simple KPICard-ready data: the exact entered value for one date (already an on-books

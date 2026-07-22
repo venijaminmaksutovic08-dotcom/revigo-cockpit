@@ -16,7 +16,7 @@ import DateActionModal from "../components/DateActionModal";
 import DataEntryModal from "../components/DataEntryModal";
 import ImportReportModal from "../components/ImportReportModal";
 import type { ParsedReportRow } from "../lib/reportImport";
-import { fetchOnBooksForDate, saveOnBooksForDate, emptyOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
+import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, emptyOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -501,6 +501,7 @@ export default function MesecniPage() {
           onConfirm={async (rows: ParsedReportRow[]) => {
             if (rows.length > 0) {
               await saveEntryForDate(openDate, rows[0].data);
+              if (selectedHotel) await saveMonthlyTargetIfAbsent(selectedHotel, openDate, rows[0].data);
             }
             closeAll();
           }}

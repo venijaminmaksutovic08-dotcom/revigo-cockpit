@@ -4,6 +4,11 @@ import { useRef, useState } from "react";
 import { X, FileSpreadsheet, Upload, AlertCircle, CalendarDays } from "lucide-react";
 import { parseReportFile, type ParsedReportRow } from "../lib/reportImport";
 import { parseDailyReportExcelForMonth } from "../lib/dailyReportExcelImport";
+import { MONTHS_SR } from "../context/HotelContext";
+
+function fmtInt(n: number): string { return Math.round(n).toLocaleString("sr-RS"); }
+function fmtRSD(n: number): string { return `${Math.round(n).toLocaleString("sr-RS")} RSD`; }
+function fmtPct1(n: number): string { return `${(Math.round(n * 10) / 10).toLocaleString("sr-RS")}%`; }
 
 interface ImportReportModalProps {
   hotel: string;
@@ -32,15 +37,18 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
   const [error, setError]                     = useState<string | null>(null);
   const [parsing, setParsing]                 = useState(false);
   const [saving, setSaving]                   = useState(false);
+  const [dragActive, setDragActive]           = useState(false);
+  // Set when the wide "Daily report" monthly sheet was the source — the preview then shows the
+  // simple single-metric summary card the format calls for, instead of the generic per-date table.
+  const [wideMonthLabel, setWideMonthLabel]   = useState<string | null>(null);
 
   const isSingleDate = Boolean(fixedDate);
 
-  async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  async function processFile(file: File) {
     setFileName(file.name);
     setParsing(true);
     setError(null);
+    setWideMonthLabel(null);
 
     // Single-date mode: this hotel's real export is the wide "Daily report" sheet (one section per
     // calendar month, no date column at all) — try that layout first and pull just the selected
@@ -57,6 +65,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
         setMatchedHeaders([]);
         setDefaultedHeaders([]);
         setUnmatchedHeaders([]);
+        setWideMonthLabel(`${MONTHS_SR[monthNumber - 1]} ${fixedDate.dateISO.slice(0, 4)}`);
         setStep("preview");
         return;
       }
@@ -98,6 +107,30 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setStep("preview");
   }
 
+  function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    processFile(file);
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragActive(false);
+    if (parsing) return;
+    const file = e.dataTransfer.files?.[0];
+    if (file) processFile(file);
+  }
+
+  function handleDragOver(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    if (!dragActive) setDragActive(true);
+  }
+
+  function handleDragLeave(e: React.DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+    setDragActive(false);
+  }
+
   async function handleConfirm() {
     setSaving(true);
     await onConfirm(rows);
@@ -109,6 +142,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setRows([]);
     setError(null);
     setHadMultipleRows(false);
+    setWideMonthLabel(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -156,7 +190,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
           >
             <CalendarDays size={15} color="#C9A84C" style={{ flexShrink: 0 }} />
             <div style={{ fontSize: 13, color: "#111827" }}>
-              <strong>Uvozite izveštaj za: {fixedDate.dateLabel}</strong>
+              <strong>Uvoz izveštaja za: {fixedDate.dateLabel}</strong>
             </div>
             <div style={{ fontSize: 11, color: "#9ca3af", marginLeft: "auto" }}>
               Datum je zaključan
@@ -167,7 +201,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
         {/* Body */}
         <div className="px-6 py-5 flex-1 overflow-y-auto" style={{ minHeight: 0 }}>
           {step === "select" && (
-            <div className="flex flex-col items-center justify-center" style={{ minHeight: 260 }}>
+            <div className="flex flex-col items-center" style={{ minHeight: 260 }}>
               <input
                 ref={fileInputRef}
                 type="file"
@@ -176,34 +210,52 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
                 style={{ display: "none" }}
               />
               <div
-                className="rounded-xl flex items-center justify-center mb-4"
-                style={{ width: 56, height: 56, background: "#f9fafb", border: "1px solid #e5e7eb" }}
-              >
-                <Upload size={24} color="#9ca3af" />
-              </div>
-              <div style={{ fontSize: 14, fontWeight: 600, color: "#374151", marginBottom: 4 }}>
-                {parsing ? "Učitavanje fajla..." : "Izaberite Excel (.xlsx) ili CSV fajl"}
-              </div>
-              <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 16, textAlign: "center", maxWidth: 420 }}>
-                {isSingleDate
-                  ? "Podaci iz fajla biće uvezeni za odabrani datum. Datum u fajlu se ignoriše."
-                  : "Fajl treba da sadrži kolonu sa datumom i kolone za Broj Noćenja, Ukupan Prihod, ADR, Popunjenost, RevPAR, Prošlu godinu, Isti dan prošle godine, Na knjigama juče/danas i Target."}
-              </div>
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                disabled={parsing}
+                onClick={() => !parsing && fileInputRef.current?.click()}
+                onDrop={handleDrop}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                className="flex flex-col items-center justify-center w-full rounded-2xl"
                 style={{
-                  height: 38, paddingLeft: 20, paddingRight: 20, borderRadius: 8,
-                  border: "none",
-                  background: "linear-gradient(135deg, #C9A84C 0%, #E8C96B 100%)",
-                  color: "#ffffff", fontSize: 13, fontWeight: 600,
+                  minHeight: 260, padding: "32px 20px",
+                  border: `2px dashed ${dragActive ? "#C9A84C" : "#d1d5db"}`,
+                  background: dragActive ? "rgba(201,168,76,0.06)" : "#fafafa",
                   cursor: parsing ? "default" : "pointer",
-                  boxShadow: "0 2px 8px rgba(201,168,76,0.3)",
-                  opacity: parsing ? 0.7 : 1,
+                  transition: "border-color 0.15s, background 0.15s",
                 }}
               >
-                {parsing ? "Učitavanje..." : "Izaberi fajl"}
-              </button>
+                <div
+                  className="rounded-xl flex items-center justify-center mb-4"
+                  style={{ width: 64, height: 64, background: "rgba(201,168,76,0.08)", border: "1px solid rgba(201,168,76,0.2)" }}
+                >
+                  <Upload size={28} color="#C9A84C" />
+                </div>
+                <div style={{ fontSize: 16, fontWeight: 700, color: "#111827", marginBottom: 6 }}>
+                  {parsing ? "Učitavanje fajla..." : "Prevucite fajl ovde ili kliknite da izaberete"}
+                </div>
+                <div style={{ fontSize: 12, color: "#9ca3af", marginBottom: 18, textAlign: "center", maxWidth: 440 }}>
+                  {isSingleDate
+                    ? "Podaci iz fajla biće uvezeni za odabrani datum. Datum u fajlu se ignoriše."
+                    : "Fajl treba da sadrži kolonu sa datumom i kolone za Broj Noćenja, Ukupan Prihod, ADR, Popunjenost, RevPAR, Prošlu godinu, Isti dan prošle godine, Na knjigama juče/danas i Target."}
+                </div>
+                <button
+                  onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                  disabled={parsing}
+                  style={{
+                    height: 40, paddingLeft: 22, paddingRight: 22, borderRadius: 8,
+                    border: "none",
+                    background: "linear-gradient(135deg, #C9A84C 0%, #E8C96B 100%)",
+                    color: "#ffffff", fontSize: 13, fontWeight: 600,
+                    cursor: parsing ? "default" : "pointer",
+                    boxShadow: "0 2px 8px rgba(201,168,76,0.3)",
+                    opacity: parsing ? 0.7 : 1,
+                  }}
+                >
+                  {parsing ? "Učitavanje..." : "Izaberi fajl"}
+                </button>
+                <div style={{ fontSize: 11, color: "#d1d5db", marginTop: 14 }}>
+                  Podržani formati: .xlsx, .xls, .csv
+                </div>
+              </div>
 
               {error && (
                 <div
@@ -217,7 +269,46 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
             </div>
           )}
 
-          {step === "preview" && (
+          {step === "preview" && wideMonthLabel && rows.length > 0 && (
+            <div className="flex flex-col gap-4">
+              <div style={{ fontSize: 13, color: "#374151" }}>
+                <strong>{fileName}</strong> — podaci pronađeni u listu &quot;Daily report&quot;.
+              </div>
+
+              <div
+                className="rounded-2xl"
+                style={{ border: "1.5px solid rgba(201,168,76,0.3)", background: "rgba(201,168,76,0.04)", padding: "20px 24px" }}
+              >
+                <div style={{ fontSize: 14, fontWeight: 700, color: "#92400e", marginBottom: 14 }}>
+                  Pronađeni podaci za {wideMonthLabel}:
+                </div>
+                <div className="flex flex-col gap-2.5">
+                  {[
+                    { label: "Noćenja",     value: fmtInt(rows[0].data.brojNocenja.naKnjigamaDanas) },
+                    { label: "Prihod",      value: fmtRSD(rows[0].data.ukupanPrihod.naKnjigamaDanas) },
+                    { label: "ADR",         value: fmtRSD(rows[0].data.adr.naKnjigamaDanas) },
+                    { label: "Popunjenost", value: fmtPct1(rows[0].data.popunjenost.naKnjigamaDanas) },
+                    { label: "RevPAR",      value: fmtRSD(rows[0].data.revpar.naKnjigamaDanas) },
+                  ].map(({ label, value }) => (
+                    <div
+                      key={label}
+                      className="flex items-center justify-between"
+                      style={{ padding: "6px 0", borderBottom: "1px solid rgba(201,168,76,0.15)" }}
+                    >
+                      <span style={{ fontSize: 13, color: "#6b7280" }}>{label}</span>
+                      <span style={{ fontSize: 15, fontWeight: 700, color: "#111827" }}>{value}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ fontSize: 12, color: "#9ca3af" }}>
+                Podaci će biti sačuvani za <strong>{fixedDate?.dateLabel}</strong>. Target vrednosti iz fajla biće postavljene kao mesečni target, ako još nije postavljen.
+              </div>
+            </div>
+          )}
+
+          {step === "preview" && !wideMonthLabel && (
             <div className="flex flex-col gap-4">
               {/* File summary */}
               <div style={{ fontSize: 13, color: "#374151" }}>
