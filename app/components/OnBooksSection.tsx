@@ -11,6 +11,7 @@ import {
   getCurrentMonthDef,
   toISO,
   dateParts,
+  daysInMonthOf,
   shiftYears,
   type OnBooksMonthInput,
   type StayMonthDef,
@@ -110,14 +111,18 @@ export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBook
     (async () => {
       const { year, month } = dateParts(asOfDate);
       const monthStart = toISO(year, month, 1);
-      const lastYearAsOfDate = shiftYears(asOfDate, -1);
       const lastYearMonthStart = shiftYears(monthStart, -1);
+      // Last year's YoY comparison uses the latest report anywhere in that whole month — not
+      // bounded to "on or before the same relative day" — since last year's reporting cadence may
+      // be sparse and not happen to land on/before that exact day even though the month has data.
+      const { year: lastYearYear, month: lastYearMonthNum } = dateParts(lastYearMonthStart);
+      const lastYearMonthEnd = toISO(lastYearYear, lastYearMonthNum, daysInMonthOf(lastYearMonthStart));
 
       const [current, stayMonths, currentMonthSnap, currentMonthLastYearSnap] = await Promise.all([
         fetchOnBooksForDate(hotelId, asOfDate),
         Promise.resolve(getOnBooksStayMonths(asOfDate)),
         fetchLatestMonthSnapshot(hotelId, monthStart, asOfDate),
-        fetchLatestMonthSnapshot(hotelId, lastYearMonthStart, lastYearAsOfDate),
+        fetchLatestMonthSnapshot(hotelId, lastYearMonthStart, lastYearMonthEnd),
       ]);
       const lastYearRows = await Promise.all(
         stayMonths.map(def => fetchOnBooksLastYear(hotelId, asOfDate, def.month, def.year))
