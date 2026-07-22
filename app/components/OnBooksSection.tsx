@@ -11,8 +11,6 @@ import {
   getCurrentMonthDef,
   toISO,
   dateParts,
-  daysInMonthOf,
-  shiftYears,
   type OnBooksMonthInput,
   type StayMonthDef,
   type CurrentMonthSnapshot,
@@ -100,29 +98,24 @@ function MonthCard({ data, asOfDate, subtitle }: { data: MonthCardData; asOfDate
 export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBooksSectionProps) {
   const [months, setMonths] = useState<MonthCardData[] | null>(null);
   const [currentSnapshot, setCurrentSnapshot] = useState<CurrentMonthSnapshot | null>(null);
-  const [currentLastYearSnapshot, setCurrentLastYearSnapshot] = useState<CurrentMonthSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!hotelId || !asOfDate) { setMonths(null); setCurrentSnapshot(null); setCurrentLastYearSnapshot(null); return; }
+    if (!hotelId || !asOfDate) { setMonths(null); setCurrentSnapshot(null); return; }
     let cancelled = false;
     setLoading(true);
 
     (async () => {
       const { year, month } = dateParts(asOfDate);
       const monthStart = toISO(year, month, 1);
-      const lastYearMonthStart = shiftYears(monthStart, -1);
-      // Last year's YoY comparison uses the latest report anywhere in that whole month — not
-      // bounded to "on or before the same relative day" — since last year's reporting cadence may
-      // be sparse and not happen to land on/before that exact day even though the month has data.
-      const { year: lastYearYear, month: lastYearMonthNum } = dateParts(lastYearMonthStart);
-      const lastYearMonthEnd = toISO(lastYearYear, lastYearMonthNum, daysInMonthOf(lastYearMonthStart));
 
-      const [current, stayMonths, currentMonthSnap, currentMonthLastYearSnap] = await Promise.all([
+      const [current, stayMonths, currentMonthSnap] = await Promise.all([
         fetchOnBooksForDate(hotelId, asOfDate),
         Promise.resolve(getOnBooksStayMonths(asOfDate)),
+        // Its YoY figures come from this same row's own "Same Day Last Year" field (imported
+        // straight from the report's index-3 column), not a separate prior-year daily_reports
+        // row — that row may not exist even when this year's row does.
         fetchLatestMonthSnapshot(hotelId, monthStart, asOfDate),
-        fetchLatestMonthSnapshot(hotelId, lastYearMonthStart, lastYearMonthEnd),
       ]);
       const lastYearRows = await Promise.all(
         stayMonths.map(def => fetchOnBooksLastYear(hotelId, asOfDate, def.month, def.year))
@@ -130,7 +123,6 @@ export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBook
       if (cancelled) return;
       setMonths(stayMonths.map((def, i) => ({ def, current: current[i], lastYear: lastYearRows[i] })));
       setCurrentSnapshot(currentMonthSnap);
-      setCurrentLastYearSnapshot(currentMonthLastYearSnap);
       setLoading(false);
     })();
 
@@ -163,11 +155,11 @@ export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBook
                 revenueOnbooks: currentSnapshot.revenueOnbooks,
                 occupancyOnbooks: currentSnapshot.occupancyOnbooks,
               },
-              lastYear: currentLastYearSnapshot?.reportDate
+              lastYear: currentSnapshot.reportDate
                 ? {
-                    rooms_onbooks: currentLastYearSnapshot.roomsOnbooks,
-                    revenue_onbooks: currentLastYearSnapshot.revenueOnbooks,
-                    occupancy_onbooks: currentLastYearSnapshot.occupancyOnbooks,
+                    rooms_onbooks: currentSnapshot.roomsOnbooksLY,
+                    revenue_onbooks: currentSnapshot.revenueOnbooksLY,
+                    occupancy_onbooks: currentSnapshot.occupancyOnbooksLY,
                   }
                 : null,
             }}

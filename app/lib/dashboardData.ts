@@ -380,6 +380,14 @@ export interface ReportSnapshot {
   adr: number;
   popunjenost: number;
   revpar: number;
+  // "Same Day Last Year" — entered/imported alongside this very row (e.g. from the Excel file's
+  // index-3 column), not fetched from a separate historical row. A real prior-year daily_reports
+  // row for the same period may not exist yet, so this is the only YoY figure guaranteed available.
+  brojNocenjaLY: number;
+  ukupanPrihodLY: number;
+  adrLY: number;
+  popunjenostLY: number;
+  revparLY: number;
 }
 
 // Returns the single most recent daily_reports row in the range, or null if there isn't one.
@@ -390,7 +398,7 @@ export interface ReportSnapshot {
 export async function fetchLatestReportSnapshot(hotelId: string, startISO: string, endISO: string): Promise<ReportSnapshot | null> {
   const { data, error } = await supabase
     .from("daily_reports")
-    .select("report_date, on_books_today")
+    .select("report_date, on_books_today, same_day_last_year")
     .eq("hotel_id", hotelId)
     .gte("report_date", startISO)
     .lte("report_date", endISO)
@@ -402,6 +410,7 @@ export async function fetchLatestReportSnapshot(hotelId: string, startISO: strin
   if (!data) return null;
 
   const o = data.on_books_today as Record<string, number>;
+  const ly = (data.same_day_last_year ?? {}) as Record<string, number>;
   return {
     reportDate: data.report_date,
     brojNocenja: Number(o.brojNocenja ?? 0),
@@ -409,6 +418,11 @@ export async function fetchLatestReportSnapshot(hotelId: string, startISO: strin
     adr: Number(o.adr ?? 0),
     popunjenost: Number(o.popunjenost ?? 0),
     revpar: Number(o.revpar ?? 0),
+    brojNocenjaLY: Number(ly.brojNocenja ?? 0),
+    ukupanPrihodLY: Number(ly.ukupanPrihod ?? 0),
+    adrLY: Number(ly.adr ?? 0),
+    popunjenostLY: Number(ly.popunjenost ?? 0),
+    revparLY: Number(ly.revpar ?? 0),
   };
 }
 
@@ -417,18 +431,28 @@ export interface CurrentMonthSnapshot {
   roomsOnbooks: number;
   revenueOnbooks: number;
   occupancyOnbooks: number;
+  roomsOnbooksLY: number;
+  revenueOnbooksLY: number;
+  occupancyOnbooksLY: number;
 }
 
 // The current-month on-books card must behave like the future-month cards: a single latest
-// reading, never a sum across every daily_reports row in the month.
+// reading, never a sum across every daily_reports row in the month. Its YoY figures come from the
+// same row's own Same Day Last Year field (see ReportSnapshot) rather than a separate prior-year
+// row, since prior-year daily_reports data may not exist yet even when this year's does.
 export async function fetchLatestMonthSnapshot(hotelId: string, startISO: string, endISO: string): Promise<CurrentMonthSnapshot> {
   const snap = await fetchLatestReportSnapshot(hotelId, startISO, endISO);
-  if (!snap) return { reportDate: null, roomsOnbooks: 0, revenueOnbooks: 0, occupancyOnbooks: 0 };
+  if (!snap) {
+    return { reportDate: null, roomsOnbooks: 0, revenueOnbooks: 0, occupancyOnbooks: 0, roomsOnbooksLY: 0, revenueOnbooksLY: 0, occupancyOnbooksLY: 0 };
+  }
   return {
     reportDate: snap.reportDate,
     roomsOnbooks: snap.brojNocenja,
     revenueOnbooks: snap.ukupanPrihod,
     occupancyOnbooks: snap.popunjenost,
+    roomsOnbooksLY: snap.brojNocenjaLY,
+    revenueOnbooksLY: snap.ukupanPrihodLY,
+    occupancyOnbooksLY: snap.popunjenostLY,
   };
 }
 
