@@ -2,8 +2,8 @@
 
 import { useRef, useState } from "react";
 import { X, FileSpreadsheet, Upload, AlertCircle, CheckCircle2, CalendarClock, CalendarRange, Layers } from "lucide-react";
-import { parseDailyReportExcel, type ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
-import { importOnBooksMonths, importActualsMonths } from "../lib/dashboardData";
+import { parseDailyReportExcel, parseDateFromFilename, type ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
+import { importOnBooksMonths, importActualsMonths, todayISO, formatDateSr } from "../lib/dashboardData";
 
 interface ExcelImportModalProps {
   hotelId: string;
@@ -30,6 +30,11 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
   const [parsing, setParsing] = useState(false);
   const [importingMode, setImportingMode] = useState<ImportMode | null>(null);
   const [resultCount, setResultCount] = useState(0);
+  // The sheet has no date cell of its own — its "as of" date comes from the filename (e.g.
+  // "Queen_Daily_report_26_07.xlsx"). Falls back to today, with a visible warning, when that
+  // can't be read, so an import is never silently mis-dated to whenever someone happened to click.
+  const [asOfDate, setAsOfDate] = useState(todayISO());
+  const [dateWarning, setDateWarning] = useState<string | null>(null);
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
@@ -53,6 +58,15 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
       return;
     }
 
+    const parsedDate = parseDateFromFilename(file.name);
+    if (parsedDate.dateISO) {
+      setAsOfDate(parsedDate.dateISO);
+      setDateWarning(null);
+    } else {
+      setAsOfDate(todayISO());
+      setDateWarning(parsedDate.error);
+    }
+
     setMonths(result.months);
     setStep("selectMode");
   }
@@ -64,13 +78,13 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
     let count = 0;
     try {
       if (mode === "onbooks") {
-        count = await importOnBooksMonths(hotelId, months);
+        count = await importOnBooksMonths(hotelId, months, asOfDate);
       } else if (mode === "actuals") {
-        count = await importActualsMonths(hotelId, months);
+        count = await importActualsMonths(hotelId, months, asOfDate);
       } else {
         const [onBooksCount, actualsCount] = await Promise.all([
-          importOnBooksMonths(hotelId, months),
-          importActualsMonths(hotelId, months),
+          importOnBooksMonths(hotelId, months, asOfDate),
+          importActualsMonths(hotelId, months, asOfDate),
         ]);
         count = onBooksCount + actualsCount;
       }
@@ -88,6 +102,8 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
     setMonths([]);
     setError(null);
     setFileName("");
+    setAsOfDate(todayISO());
+    setDateWarning(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -184,6 +200,22 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
                 <div style={{ fontSize: 16, fontWeight: 700, color: "#111827", marginBottom: 4 }}>Fajl učitan uspešno</div>
                 <div style={{ fontSize: 13, color: "#9ca3af" }}>{fileName} — Odaberite šta želite da uvezete</div>
               </div>
+
+              {dateWarning ? (
+                <div
+                  className="flex items-start gap-2 rounded-lg"
+                  style={{ padding: "10px 12px", background: "rgba(234,179,8,0.06)", border: "1px solid rgba(234,179,8,0.2)" }}
+                >
+                  <AlertCircle size={15} color="#ca8a04" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span style={{ fontSize: 12, color: "#92400e" }}>
+                    {dateWarning} Koristi se današnji datum: <strong>{formatDateSr(asOfDate)}</strong>.
+                  </span>
+                </div>
+              ) : (
+                <div style={{ fontSize: 12, color: "#9ca3af" }}>
+                  Podaci će biti sačuvani kao stanje na dan <strong>{formatDateSr(asOfDate)}</strong> (pročitano iz naziva fajla).
+                </div>
+              )}
 
               {error && (
                 <div

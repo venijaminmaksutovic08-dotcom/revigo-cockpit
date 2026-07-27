@@ -41,6 +41,9 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
   // Set when the wide "Daily report" monthly sheet was the source — the preview then shows the
   // simple single-metric summary card the format calls for, instead of the generic per-date table.
   const [wideMonthLabel, setWideMonthLabel]   = useState<string | null>(null);
+  // Fields the parser couldn't read (blank cell, Excel error like #REF!/#DIV/0!, unparsable text)
+  // — these got saved as 0 below, but the user needs to know they're not a real reading.
+  const [missingFields, setMissingFields]     = useState<string[]>([]);
 
   const isSingleDate = Boolean(fixedDate);
 
@@ -49,6 +52,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setParsing(true);
     setError(null);
     setWideMonthLabel(null);
+    setMissingFields([]);
 
     // Single-date mode: this hotel's real export is the wide "Daily report" sheet (one section per
     // calendar month, no date column at all) — try that layout first and pull just the selected
@@ -65,6 +69,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
         setMatchedHeaders([]);
         setDefaultedHeaders([]);
         setUnmatchedHeaders([]);
+        setMissingFields(wide.missingFields);
         setWideMonthLabel(`${MONTHS_SR[monthNumber - 1]} ${fixedDate.dateISO.slice(0, 4)}`);
         setStep("preview");
         return;
@@ -143,6 +148,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setError(null);
     setHadMultipleRows(false);
     setWideMonthLabel(null);
+    setMissingFields([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -301,6 +307,21 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
                   ))}
                 </div>
               </div>
+
+              {missingFields.length > 0 && (
+                <div
+                  className="flex items-start gap-2 rounded-lg"
+                  style={{ padding: "10px 12px", background: "rgba(220,38,38,0.06)", border: "1px solid rgba(220,38,38,0.2)" }}
+                >
+                  <AlertCircle size={15} color="#dc2626" style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ fontSize: 12, color: "#991b1b" }}>
+                    <strong>⚠ Nije učitano</strong> — sledeća polja nisu mogla biti pročitana iz fajla (prazna ćelija ili greška poput #REF!/#DIV/0!) i biće sačuvana kao 0:
+                    <ul style={{ margin: "4px 0 0", paddingLeft: 18 }}>
+                      {missingFields.map(f => <li key={f}>{f}</li>)}
+                    </ul>
+                  </div>
+                </div>
+              )}
 
               <div style={{ fontSize: 12, color: "#9ca3af" }}>
                 Podaci će biti sačuvani za <strong>{fixedDate?.dateLabel}</strong>. Target vrednosti iz fajla biće postavljene kao mesečni target, ako još nije postavljen.

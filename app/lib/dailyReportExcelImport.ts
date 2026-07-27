@@ -1,24 +1,35 @@
 import * as XLSX from "xlsx";
 import { MONTHS_SR, emptyEntryData, type EntryData } from "../context/HotelContext";
 
-// Parses the wide "Daily report" pace-report layout: for each calendar month (Jan-Dec) a section
-// of 5 metric rows (Room Nights, Room Revenue, ADR, % Occ., RevPAR). This is a different shape
-// from the per-date CSV import in reportImport.ts — one row per metric grouped by month, not one
-// row per date.
+// Parses the wide "Daily report" pace-report layout: one 8-row block per calendar month (month
+// name in column A, then 5 metric rows — Room Nights, Revenue, ADR, % Occ., RevPAR — then 2 spacer
+// rows before the next month). This is a different shape from the per-date CSV import in
+// reportImport.ts — one row per metric grouped by month, not one row per date.
 //
-// Column positions are FIXED, verified against a real export, and are read by index rather than
-// by header text — this sheet's headers are unreliable (merged cells, comparison columns like
-// "Today vs Target" that collide with substring header-matching, inconsistent wording across
-// exports), so header detection has repeatedly misread the wrong column. Position never lies:
-//   0: month name        1: metric name         2: Total Last Year   3: Same Day Last Year
-//   4: Month Opening (unused)   5: Yesterday (unused)   6: TODAY   7: Pickup (unused)   8: TARGET
-// Columns after 8 (Today vs Target, Today vs Last Year, Achievements) are derived and ignored.
+// Two things about this sheet have burned this parser before, so both are handled defensively:
+//
+// 1. Column layout: the On-the-Books sub-columns (Total Last Year, Same Day Last Year, Month
+//    Opening, Yesterday, Today, Target) are located ONCE by their header labels — never by a fixed
+//    index. A fixed index broke the very first time this sheet added/removed a column (that's how
+//    "Yesterday" ended up hardcoded to 0 for a while: nobody was reading column F at all). Header
+//    text is still unreliable in its own way — comparison columns like "Today vs Target" contain
+//    "today" and "target" as substrings — so those are explicitly skipped (see findColumnMap).
+//
+// 2. Row layout: the metric row LABEL varies between exports ("Room Revenue" in some files, "Total
+//    Revenue" in others), so metric rows are identified by their fixed POSITION within a month's
+//    block (Room Nights is always the row right after the month name, Revenue the one after that,
+//    etc.) rather than by matching that label text — a label that's phrased differently one month
+//    would otherwise silently vanish as an unmatched row.
 
 export interface MetricColumnValues {
-  totalLastYear: number;
-  sameDayLastYear: number;
-  today: number;
-  target: number;
+  // null = the parser could not read this cell (blank, an Excel error like #REF!/#DIV/0!, or
+  // unparsable text) — never coerced to 0, since a fake zero would hide from a real reading of
+  // zero and would get imported as if it were real data.
+  totalLastYear: number | null;
+  sameDayLastYear: number | null;
+  yesterday: number | null;
+  today: number | null;
+  target: number | null;
 }
 
 export interface ParsedMonthMetrics {
@@ -41,13 +52,15 @@ export interface ParseDailyReportResult {
 
 type MetricRowKey = "roomNights" | "revenue" | "adr" | "occupancy" | "revpar";
 
-const METRIC_KEYWORDS: Record<MetricRowKey, string[]> = {
-  roomNights: ["room nights", "room night", "nocenja", "sobe"],
-  revenue: ["room revenue", "total revenue", "prihod"],
-  adr: ["adr"],
-  occupancy: ["occ", "popunjenost"],
-  revpar: ["revpar"],
-};
+// Fixed offsets (in rows) from the month-name row to each metric row within its block. Not label
+// text — see module comment.
+const METRIC_ROW_OFFSETS: { key: MetricRowKey; offset: number }[] = [
+  { key: "roomNights", offset: 1 },
+  { key: "revenue", offset: 2 },
+  { key: "adr", offset: 3 },
+  { key: "occupancy", offset: 4 },
+  { key: "revpar", offset: 5 },
+];
 
 const MONTH_KEYWORDS: string[][] = [
   ["january", "januar"],
@@ -69,11 +82,7 @@ const ENGLISH_MONTH_NAMES = [
   "July", "August", "September", "October", "November", "December",
 ];
 
-// Fixed 0-based column indices — see module comment for the verified layout.
-const COL_TOTAL_LAST_YEAR = 2;
-const COL_SAME_DAY_LAST_YEAR = 3;
-const COL_TODAY = 6;
-const COL_TARGET = 8;
+const ERROR_STRINGS = new Set(["#ref!", "#div/0!", "#n/a", "#value!", "#name?", "#null!", "#num!"]);
 
 function normalizeCell(value: unknown): string {
   return String(value ?? "")
@@ -84,14 +93,23 @@ function normalizeCell(value: unknown): string {
     .trim();
 }
 
-function toNumber(value: unknown): number {
-  if (typeof value === "number") return value;
+function isErrorCell(value: unknown): boolean {
+  return typeof value === "string" && ERROR_STRINGS.has(value.trim().toLowerCase());
+}
+
+// Returns null (missing) rather than 0 for a blank cell, an Excel error value, or text that isn't
+// really a number — the caller decides how to surface that (never silently treated as a real zero).
+function toNumberOrMissing(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (isErrorCell(value)) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
   if (typeof value === "string") {
     const cleaned = value.replace(/[^\d.,-]/g, "").replace(",", ".");
+    if (!cleaned || cleaned === "-" || cleaned === ".") return null;
     const n = Number(cleaned);
-    return isNaN(n) ? 0 : n;
+    return Number.isFinite(n) ? n : null;
   }
-  return 0;
+  return null;
 }
 
 function matchMonth(norm: string): number | null {
@@ -102,16 +120,8 @@ function matchMonth(norm: string): number | null {
   return null;
 }
 
-function matchMetric(norm: string): MetricRowKey | null {
-  if (!norm) return null;
-  for (const key of Object.keys(METRIC_KEYWORDS) as MetricRowKey[]) {
-    if (METRIC_KEYWORDS[key].some(kw => norm.includes(kw))) return key;
-  }
-  return null;
-}
-
 function emptyMetric(): MetricColumnValues {
-  return { totalLastYear: 0, sameDayLastYear: 0, today: 0, target: 0 };
+  return { totalLastYear: null, sameDayLastYear: null, yesterday: null, today: null, target: null };
 }
 
 function emptyMonthMetrics(monthNumber: number): ParsedMonthMetrics {
@@ -125,14 +135,48 @@ function emptyMonthMetrics(monthNumber: number): ParsedMonthMetrics {
   };
 }
 
-// Fixed-position read — index 6 is always Today and index 8 is always Target, regardless of
-// whatever text (if any) appears in a header row. Never derive these from column headers.
-function readMetricValuesFixed(row: unknown[]): MetricColumnValues {
+interface OnBooksColumnMap {
+  totalLastYear?: number;
+  sameDayLastYear?: number;
+  yesterday?: number;
+  today?: number;
+  target?: number;
+}
+
+// Locates the On-the-Books sub-columns by header label, scanned once for the whole sheet (every
+// month's block shares the same physical columns). Requires yesterday+today+target together on
+// one row before accepting it, so a stray cell elsewhere that happens to say "Target" can't be
+// mistaken for the header row.
+function findColumnMap(raw: unknown[][]): OnBooksColumnMap | null {
+  for (let r = 0; r < raw.length; r++) {
+    const row = raw[r] ?? [];
+    const cols: OnBooksColumnMap = {};
+    for (let c = 0; c < row.length; c++) {
+      const norm = normalizeCell(row[c]);
+      if (!norm) continue;
+      // Comparison/delta columns ("Today vs Target", "Today vs Last Year") contain "today" and
+      // "target" as substrings too — skip them so they don't clobber the real columns.
+      if (norm.includes(" vs ")) continue;
+      if (norm.includes("same day last year")) cols.sameDayLastYear = c;
+      else if (norm.includes("total last year")) cols.totalLastYear = c;
+      else if (norm === "yesterday" || norm.includes("yesterday")) cols.yesterday = c;
+      else if (norm === "today" || norm.includes("today")) cols.today = c;
+      else if (norm === "target" || norm.includes("target")) cols.target = c;
+    }
+    if (cols.yesterday !== undefined && cols.today !== undefined && cols.target !== undefined) {
+      return cols;
+    }
+  }
+  return null;
+}
+
+function readMetricRow(row: unknown[], cols: OnBooksColumnMap): MetricColumnValues {
   return {
-    totalLastYear: toNumber(row[COL_TOTAL_LAST_YEAR]),
-    sameDayLastYear: toNumber(row[COL_SAME_DAY_LAST_YEAR]),
-    today: toNumber(row[COL_TODAY]),
-    target: toNumber(row[COL_TARGET]),
+    totalLastYear: cols.totalLastYear !== undefined ? toNumberOrMissing(row[cols.totalLastYear]) : null,
+    sameDayLastYear: cols.sameDayLastYear !== undefined ? toNumberOrMissing(row[cols.sameDayLastYear]) : null,
+    yesterday: cols.yesterday !== undefined ? toNumberOrMissing(row[cols.yesterday]) : null,
+    today: cols.today !== undefined ? toNumberOrMissing(row[cols.today]) : null,
+    target: cols.target !== undefined ? toNumberOrMissing(row[cols.target]) : null,
   };
 }
 
@@ -163,31 +207,25 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
     return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
   }
 
-  // No header-row detection at all: column 0 identifies the current month section, column 1
-  // identifies a metric row within it, and once inside a month every value is read from its fixed
-  // column position. currentMonth carries forward across rows where column 0 is blank (a month's
-  // own metric rows may or may not repeat the month name in column 0 — either way works, since we
-  // only ever update currentMonth when column 0 actually matches one).
+  const cols = findColumnMap(raw);
+  if (!cols) {
+    return { months: [], sheetFound: true, error: "Nisu prepoznate kolone (Yesterday/Today/Target) u fajlu." };
+  }
+
+  // Column 0 identifies a month's block start; the 5 metric rows are read from their fixed
+  // position below it (see METRIC_ROW_OFFSETS), not by re-matching a label per row.
   const monthsMap = new Map<number, ParsedMonthMetrics>();
-  let currentMonth: number | null = null;
 
   for (let r = 0; r < raw.length; r++) {
     const row = raw[r] ?? [];
-
     const monthNum = matchMonth(normalizeCell(row[0]));
-    if (monthNum) {
-      currentMonth = monthNum;
-      if (!monthsMap.has(monthNum)) monthsMap.set(monthNum, emptyMonthMetrics(monthNum));
+    if (!monthNum) continue;
+
+    const entry = emptyMonthMetrics(monthNum);
+    for (const { key, offset } of METRIC_ROW_OFFSETS) {
+      entry[key] = readMetricRow(raw[r + offset] ?? [], cols);
     }
-
-    if (currentMonth === null) continue;
-
-    const metricKey = matchMetric(normalizeCell(row[1]));
-    if (!metricKey) continue;
-
-    const entry = monthsMap.get(currentMonth) ?? emptyMonthMetrics(currentMonth);
-    entry[metricKey] = readMetricValuesFixed(row);
-    monthsMap.set(currentMonth, entry);
+    monthsMap.set(monthNum, entry);
   }
 
   const months = Array.from(monthsMap.values()).sort((a, b) => a.monthNumber - b.monthNumber);
@@ -195,13 +233,15 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
     return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
   }
 
-  // Verification logging for the fixed-position rewrite — confirms the Today column (index 6)
-  // landed on the right cell for whichever months this file actually contains.
+  // Verification logging — confirms Today/Yesterday landed on the right cells for whichever
+  // months this file actually contains.
   for (const m of months) {
     const name = ENGLISH_MONTH_NAMES[m.monthNumber - 1];
-    const occPct = m.occupancy.today !== 0 && Math.abs(m.occupancy.today) <= 1 ? m.occupancy.today * 100 : m.occupancy.today;
+    const occToday = m.occupancy.today;
+    const occPct = occToday !== null && occToday !== 0 && Math.abs(occToday) <= 1 ? occToday * 100 : occToday;
     console.log(
-      `${name} Today values: rooms=${m.roomNights.today}, revenue=${m.revenue.today}, adr=${m.adr.today}, occ=${occPct}, revpar=${m.revpar.today}`
+      `${name}: yesterday(rooms=${m.roomNights.yesterday}, revenue=${m.revenue.yesterday}) ` +
+      `today(rooms=${m.roomNights.today}, revenue=${m.revenue.today}, adr=${m.adr.today}, occ=${occPct}, revpar=${m.revpar.today})`
     );
   }
 
@@ -214,12 +254,32 @@ function normalizePercent(n: number): number {
   return n !== 0 && Math.abs(n) <= 1 ? n * 100 : n;
 }
 
-function metricToRowValues(m: MetricColumnValues, isPercent: boolean) {
-  const norm = isPercent ? normalizePercent : (v: number) => v;
+const COLUMN_LABELS: Record<keyof MetricColumnValues, string> = {
+  totalLastYear: "Prošla godina",
+  sameDayLastYear: "Isti dan prošle godine",
+  yesterday: "Na knjigama juče",
+  today: "Na knjigama danas",
+  target: "Target",
+};
+
+// Converts one metric's four/five columns into the app's per-column EntryData shape. A missing
+// (null) cell is stored as 0 in EntryData — the daily_reports jsonb columns are numeric and can't
+// carry a separate "missing" marker — but every missing cell is also recorded in `missing` so the
+// caller can warn about it BEFORE the user saves, instead of a silent fake zero going through
+// unannounced.
+function metricToRowValues(m: MetricColumnValues, isPercent: boolean, metricLabel: string, missing: string[]) {
+  const norm = (v: number | null): number => {
+    if (v === null) return 0;
+    return isPercent ? normalizePercent(v) : v;
+  };
+  (Object.keys(COLUMN_LABELS) as (keyof MetricColumnValues)[]).forEach(key => {
+    if (m[key] === null) missing.push(`${metricLabel} — ${COLUMN_LABELS[key]}`);
+  });
+
   return {
     prosleGodine: norm(m.totalLastYear),
     istiDanProsleGodine: norm(m.sameDayLastYear),
-    naKnjigamaJuce: 0, // not present in this sheet layout — no "Yesterday" column
+    naKnjigamaJuce: norm(m.yesterday),
     naKnjigamaDanas: norm(m.today),
     target: norm(m.target),
   };
@@ -227,14 +287,16 @@ function metricToRowValues(m: MetricColumnValues, isPercent: boolean) {
 
 // Converts one month's section of the wide "Daily report" sheet into the app's per-date EntryData
 // shape, so it can be saved through the same daily_reports upsert path as a manually entered day.
-export function monthMetricsToEntryData(m: ParsedMonthMetrics): EntryData {
+// Also returns which specific fields the parser couldn't read, for the caller to warn about.
+export function monthMetricsToEntryData(m: ParsedMonthMetrics): { data: EntryData; missingFields: string[] } {
+  const missing: string[] = [];
   const data = emptyEntryData();
-  data.brojNocenja = metricToRowValues(m.roomNights, false);
-  data.ukupanPrihod = metricToRowValues(m.revenue, false);
-  data.adr = metricToRowValues(m.adr, false);
-  data.popunjenost = metricToRowValues(m.occupancy, true);
-  data.revpar = metricToRowValues(m.revpar, false);
-  return data;
+  data.brojNocenja = metricToRowValues(m.roomNights, false, "Room Nights", missing);
+  data.ukupanPrihod = metricToRowValues(m.revenue, false, "Revenue", missing);
+  data.adr = metricToRowValues(m.adr, false, "ADR", missing);
+  data.popunjenost = metricToRowValues(m.occupancy, true, "% Occ.", missing);
+  data.revpar = metricToRowValues(m.revpar, false, "RevPAR", missing);
+  return { data, missingFields: missing };
 }
 
 export interface ParseSingleMonthResult {
@@ -243,25 +305,61 @@ export interface ParseSingleMonthResult {
   // about it — or the requested month — couldn't be read, which IS worth surfacing.
   sheetFound: boolean;
   data: EntryData | null;
+  missingFields: string[];
   error: string | null;
 }
 
-// Single-date import: pull just one month's "Today" column values out of the wide "Daily report"
+// Single-date import: pull just one month's on-the-books values out of the wide "Daily report"
 // sheet, for the calendar-selected date's month — used by ImportReportModal instead of the
 // generic per-date parser when the uploaded file is this hotel's monthly pace-report export.
 export async function parseDailyReportExcelForMonth(file: File, monthNumber: number): Promise<ParseSingleMonthResult> {
   const result = await parseDailyReportExcel(file);
   if (!result.sheetFound) {
-    return { sheetFound: false, data: null, error: null };
+    return { sheetFound: false, data: null, missingFields: [], error: null };
   }
   if (result.error) {
-    return { sheetFound: true, data: null, error: result.error };
+    return { sheetFound: true, data: null, missingFields: [], error: result.error };
   }
 
   const month = result.months.find(mm => mm.monthNumber === monthNumber);
   if (!month) {
-    return { sheetFound: true, data: null, error: `Mesec "${MONTHS_SR[monthNumber - 1]}" nije pronađen u listu "Daily report" ovog fajla.` };
+    return { sheetFound: true, data: null, missingFields: [], error: `Mesec "${MONTHS_SR[monthNumber - 1]}" nije pronađen u listu "Daily report" ovog fajla.` };
   }
 
-  return { sheetFound: true, data: monthMetricsToEntryData(month), error: null };
+  const { data, missingFields } = monthMetricsToEntryData(month);
+  return { sheetFound: true, data, missingFields, error: null };
+}
+
+// ── Filename-derived "as of" date ────────────────────────────────────────────────
+// This sheet has no date cell of its own — the report's "as of" date is only encoded in the
+// filename (e.g. "Queen_Daily_report_26_07.xlsx" = 26 July). Accepts day/month separated by _/-/.,
+// with an optional trailing year (2 or 4 digits); assumes the current year when none is given.
+
+export interface FilenameDateResult {
+  dateISO: string | null;
+  error: string | null;
+}
+
+export function parseDateFromFilename(filename: string, now: Date = new Date()): FilenameDateResult {
+  const base = filename.replace(/\.[a-z0-9]+$/i, ""); // drop extension
+  const match = base.match(/(\d{1,2})[_\-.](\d{1,2})(?:[_\-.](\d{2,4}))?(?!\d)/);
+  if (!match) {
+    return { dateISO: null, error: "Nije moguće pročitati datum iz naziva fajla — potvrdite datum ručno." };
+  }
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  let year = match[3] ? Number(match[3]) : now.getFullYear();
+  if (match[3] && match[3].length === 2) year += 2000;
+
+  if (day < 1 || day > 31 || month < 1 || month > 12) {
+    return { dateISO: null, error: "Nije moguće pročitati datum iz naziva fajla — potvrdite datum ručno." };
+  }
+  const daysInMonth = new Date(year, month, 0).getDate();
+  if (day > daysInMonth) {
+    return { dateISO: null, error: "Nije moguće pročitati datum iz naziva fajla — potvrdite datum ručno." };
+  }
+
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  return { dateISO: `${year}-${pad2(month)}-${pad2(day)}`, error: null };
 }

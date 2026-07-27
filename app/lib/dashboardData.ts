@@ -583,34 +583,44 @@ export async function fetchOnBooksLastYear(
 
 // ── Excel report import (wide "Daily report" pace-report layout) ────────────────
 
-function normalizePercent(n: number): number {
+// The parser stores an unreadable cell as null (never a fake 0) — this is where that finally
+// collapses down to the number the numeric jsonb columns require, at the last possible moment.
+function numOrZero(n: number | null): number {
+  return n ?? 0;
+}
+
+function normalizePercent(n: number | null): number {
   // The file may store occupancy as a decimal fraction (0.55) or already as a percent (55).
-  return n !== 0 && Math.abs(n) <= 1 ? n * 100 : n;
+  const v = n ?? 0;
+  return v !== 0 && Math.abs(v) <= 1 ? v * 100 : v;
 }
 
 // Months after the current calendar month are still open — their figures are forward demand, not
 // a finished result, so they're saved as on-books snapshots rather than daily_reports actuals.
-export async function importOnBooksMonths(hotelId: string, months: ParsedMonthMetrics[]): Promise<number> {
-  const { year, month: currentMonth } = dateParts(todayISO());
+// asOfDateISO defaults to today but should be the file's own "as of" date when known (see
+// parseDateFromFilename) — this sheet has no date of its own, so without it every import gets
+// silently mis-dated to whatever day someone happened to click "import".
+export async function importOnBooksMonths(hotelId: string, months: ParsedMonthMetrics[], asOfDateISO: string = todayISO()): Promise<number> {
+  const { year, month: currentMonth } = dateParts(asOfDateISO);
   const futureMonths = months.filter(m => m.monthNumber > currentMonth);
   if (futureMonths.length === 0) return 0;
 
   const entries: OnBooksMonthInput[] = futureMonths.map(m => ({
     stayMonth: m.monthNumber,
     stayYear: year,
-    roomsOnbooks: m.roomNights.today,
-    revenueOnbooks: m.revenue.today,
+    roomsOnbooks: numOrZero(m.roomNights.today),
+    revenueOnbooks: numOrZero(m.revenue.today),
     occupancyOnbooks: normalizePercent(m.occupancy.today),
   }));
-  await saveOnBooksForDate(hotelId, todayISO(), entries);
+  await saveOnBooksForDate(hotelId, asOfDateISO, entries);
   return futureMonths.length;
 }
 
 // Months up to and including the current one are actuals: one daily_reports summary row per
 // month (dated the month's last day), plus a monthly_targets row if one doesn't already exist —
 // an existing manually-set target is never overwritten by the import.
-export async function importActualsMonths(hotelId: string, months: ParsedMonthMetrics[]): Promise<number> {
-  const { year, month: currentMonth } = dateParts(todayISO());
+export async function importActualsMonths(hotelId: string, months: ParsedMonthMetrics[], asOfDateISO: string = todayISO()): Promise<number> {
+  const { year, month: currentMonth } = dateParts(asOfDateISO);
   const pastMonths = months.filter(m => m.monthNumber <= currentMonth);
   if (pastMonths.length === 0) return 0;
 
@@ -622,33 +632,39 @@ export async function importActualsMonths(hotelId: string, months: ParsedMonthMe
       hotel_id: hotelId,
       report_date: reportDate,
       last_year: {
-        brojNocenja: m.roomNights.totalLastYear,
-        ukupanPrihod: m.revenue.totalLastYear,
-        adr: m.adr.totalLastYear,
+        brojNocenja: numOrZero(m.roomNights.totalLastYear),
+        ukupanPrihod: numOrZero(m.revenue.totalLastYear),
+        adr: numOrZero(m.adr.totalLastYear),
         popunjenost: normalizePercent(m.occupancy.totalLastYear),
-        revpar: m.revpar.totalLastYear,
+        revpar: numOrZero(m.revpar.totalLastYear),
       },
       same_day_last_year: {
-        brojNocenja: m.roomNights.sameDayLastYear,
-        ukupanPrihod: m.revenue.sameDayLastYear,
-        adr: m.adr.sameDayLastYear,
+        brojNocenja: numOrZero(m.roomNights.sameDayLastYear),
+        ukupanPrihod: numOrZero(m.revenue.sameDayLastYear),
+        adr: numOrZero(m.adr.sameDayLastYear),
         popunjenost: normalizePercent(m.occupancy.sameDayLastYear),
-        revpar: m.revpar.sameDayLastYear,
+        revpar: numOrZero(m.revpar.sameDayLastYear),
       },
-      on_books_yesterday: { brojNocenja: 0, ukupanPrihod: 0, adr: 0, popunjenost: 0, revpar: 0 },
+      on_books_yesterday: {
+        brojNocenja: numOrZero(m.roomNights.yesterday),
+        ukupanPrihod: numOrZero(m.revenue.yesterday),
+        adr: numOrZero(m.adr.yesterday),
+        popunjenost: normalizePercent(m.occupancy.yesterday),
+        revpar: numOrZero(m.revpar.yesterday),
+      },
       on_books_today: {
-        brojNocenja: m.roomNights.today,
-        ukupanPrihod: m.revenue.today,
-        adr: m.adr.today,
+        brojNocenja: numOrZero(m.roomNights.today),
+        ukupanPrihod: numOrZero(m.revenue.today),
+        adr: numOrZero(m.adr.today),
         popunjenost: normalizePercent(m.occupancy.today),
-        revpar: m.revpar.today,
+        revpar: numOrZero(m.revpar.today),
       },
       target: {
-        brojNocenja: m.roomNights.target,
-        ukupanPrihod: m.revenue.target,
-        adr: m.adr.target,
+        brojNocenja: numOrZero(m.roomNights.target),
+        ukupanPrihod: numOrZero(m.revenue.target),
+        adr: numOrZero(m.adr.target),
         popunjenost: normalizePercent(m.occupancy.target),
-        revpar: m.revpar.target,
+        revpar: numOrZero(m.revpar.target),
       },
     };
 
@@ -669,11 +685,11 @@ export async function importActualsMonths(hotelId: string, months: ParsedMonthMe
       const { error: targetError } = await supabase.from("monthly_targets").insert({
         hotel_id: hotelId,
         year_month: yearMonth,
-        revenue_target: m.revenue.target,
-        room_nights_target: m.roomNights.target,
-        adr_target: m.adr.target,
+        revenue_target: numOrZero(m.revenue.target),
+        room_nights_target: numOrZero(m.roomNights.target),
+        adr_target: numOrZero(m.adr.target),
         occupancy_target: normalizePercent(m.occupancy.target),
-        revpar_target: m.revpar.target,
+        revpar_target: numOrZero(m.revpar.target),
       });
       if (targetError) console.error("Failed to save monthly target from import:", targetError.message);
     }
