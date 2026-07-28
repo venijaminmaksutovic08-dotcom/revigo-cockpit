@@ -193,23 +193,40 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
     return { months: [], sheetFound: false, error: "Pogrešan format fajla. Očekuje se .xlsx" };
   }
 
-  let sheetName = workbook.SheetNames.find(n => normalizeCell(n) === "daily report");
-  if (!sheetName) sheetName = workbook.SheetNames.find(n => normalizeCell(n).includes("daily report"));
-  if (!sheetName) {
-    return { months: [], sheetFound: false, error: "Sheet 'Daily report' nije pronađen u fajlu." };
+  if (workbook.SheetNames.length === 0) {
+    return { months: [], sheetFound: false, error: "Fajl ne sadrži nijedan list." };
   }
 
-  let raw: unknown[][];
-  try {
-    const sheet = workbook.Sheets[sheetName];
-    raw = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1, defval: "" });
-  } catch {
-    return { months: [], sheetFound: true, error: "Nisu pronađeni podaci za uvoz." };
+  // The sheet is identified by its STRUCTURE (a row with Yesterday/Today/Target headers), not by
+  // its exact name — the name has varied between exports and this sheet never has a date column
+  // to fall back on, so getting sheet detection wrong here means the import can't work at all.
+  // Sheets whose name mentions "daily" are tried first (fast path for the common case), then
+  // every other sheet, so a differently-named export still gets found.
+  const byNameScore = (n: string) => (normalizeCell(n).includes("daily") ? 0 : 1);
+  const candidates = [...workbook.SheetNames].sort((a, b) => byNameScore(a) - byNameScore(b));
+
+  let raw: unknown[][] | null = null;
+  let cols: OnBooksColumnMap | null = null;
+  for (const name of candidates) {
+    let candidateRaw: unknown[][];
+    try {
+      candidateRaw = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[name], { header: 1, defval: "" });
+    } catch {
+      continue;
+    }
+    const candidateCols = findColumnMap(candidateRaw);
+    if (candidateCols) {
+      raw = candidateRaw;
+      cols = candidateCols;
+      break;
+    }
   }
 
-  const cols = findColumnMap(raw);
-  if (!cols) {
-    return { months: [], sheetFound: true, error: "Nisu prepoznate kolone (Yesterday/Today/Target) u fajlu." };
+  if (!raw || !cols) {
+    // sheetFound: true (not false) — this genuinely is (or was meant to be) this report format,
+    // so the caller should surface this error directly rather than silently trying some other
+    // parser that expects a date column this sheet will never have.
+    return { months: [], sheetFound: true, error: "Nije prepoznat list sa dnevnim izveštajem (kolone Yesterday/Today/Target nisu pronađene ni u jednom listu)." };
   }
 
   // Column 0 identifies a month's block start; the 5 metric rows are read from their fixed

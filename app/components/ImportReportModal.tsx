@@ -54,16 +54,17 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setWideMonthLabel(null);
     setMissingFields([]);
 
-    // Single-date mode: this hotel's real export is the wide "Daily report" sheet (one section per
-    // calendar month, no date column at all) — try that layout first and pull just the selected
-    // date's month. Only fall back to the generic per-date parser below when the file isn't that
-    // format (sheetFound === false); if it IS that format but something's wrong, surface the error
-    // instead of silently trying — and likely failing — the generic parser.
+    // Single-date mode: the report date is always locked to the calendar selection, never read
+    // from the file — and this hotel's real export (the wide "Daily report" sheet, one section per
+    // calendar month) never has a date column at all. So this path ALWAYS uses that parser and
+    // NEVER falls back to the generic per-date parser below, which requires a Date/Datum column
+    // these files will never have — falling back to it just produced a confusing, wrong error
+    // ("date column not found") instead of the real problem.
     if (isSingleDate && fixedDate) {
       const monthNumber = Number(fixedDate.dateISO.slice(5, 7));
       const wide = await parseDailyReportExcelForMonth(file, monthNumber);
+      setParsing(false);
       if (wide.data) {
-        setParsing(false);
         setHadMultipleRows(false);
         setRows([{ dateISO: fixedDate.dateISO, dateLabel: fixedDate.dateLabel, data: wide.data }]);
         setMatchedHeaders([]);
@@ -72,14 +73,10 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
         setMissingFields(wide.missingFields);
         setWideMonthLabel(`${MONTHS_SR[monthNumber - 1]} ${fixedDate.dateISO.slice(0, 4)}`);
         setStep("preview");
-        return;
+      } else {
+        setError(wide.error ?? "Nije moguće pročitati fajl. Proverite da li je u ispravnom Excel formatu.");
       }
-      if (wide.sheetFound) {
-        setParsing(false);
-        setError(wide.error);
-        return;
-      }
-      // Not a "Daily report" workbook — fall through to the generic per-date parser.
+      return;
     }
 
     const result = await parseReportFile(file);
