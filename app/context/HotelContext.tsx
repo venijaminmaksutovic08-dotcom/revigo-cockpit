@@ -10,12 +10,72 @@ export interface SavedHotel {
   rooms: number;
   city: string;
   currentPrice: number | null;
+  priceCls: number | null;
+  priceDplx: number | null;
+  priceSuperior: number | null;
+  priceKing: number | null;
 }
+
+export type RoomTypeKey = "cls" | "dplx" | "superior" | "king";
+
+export const ROOM_TYPE_DEFS: { key: RoomTypeKey; label: string }[] = [
+  { key: "cls", label: "CLS" },
+  { key: "dplx", label: "DPLX" },
+  { key: "superior", label: "Superior" },
+  { key: "king", label: "King" },
+];
 
 export interface NewHotelInput {
   name: string;
   rooms: number;
   city: string;
+}
+
+const BASE_HOTEL_COLUMNS = "id, name, city, rooms, current_price, created_at";
+const FULL_HOTEL_COLUMNS = "id, name, city, rooms, current_price, price_cls, price_dplx, price_superior, price_king, created_at";
+
+interface HotelRow {
+  id: string;
+  name: string;
+  city: string;
+  rooms: number;
+  current_price: number | null;
+  price_cls?: number | null;
+  price_dplx?: number | null;
+  price_superior?: number | null;
+  price_king?: number | null;
+}
+
+function hotelRowToSavedHotel(h: HotelRow): SavedHotel {
+  return {
+    id: h.id,
+    name: h.name,
+    city: h.city,
+    rooms: h.rooms,
+    currentPrice: h.current_price,
+    priceCls: h.price_cls ?? null,
+    priceDplx: h.price_dplx ?? null,
+    priceSuperior: h.price_superior ?? null,
+    priceKing: h.price_king ?? null,
+  };
+}
+
+// The 4 room-type price columns are a newer addition — if that migration hasn't been applied yet
+// in a given environment, selecting them would error out and take down hotel-loading (and with it
+// every page, not just Preporuka Cena). Try the full select first; if it fails specifically because
+// those columns don't exist, silently fall back to the base columns instead of breaking the app.
+async function fetchHotelsList() {
+  const full = await supabase.from("hotels").select(FULL_HOTEL_COLUMNS).order("created_at", { ascending: true });
+  if (!full.error) return full;
+  console.error("Room-type price columns unavailable (run the latest migration?) — falling back:", full.error.message);
+  return supabase.from("hotels").select(BASE_HOTEL_COLUMNS).order("created_at", { ascending: true });
+}
+
+// A brand-new hotel never has room-type prices set at creation time anyway (they default to
+// null either way), so the insert only ever needs to SELECT the base columns back — no risk of
+// retrying (and thus double-running) the insert itself if the full select were to fail instead.
+async function insertHotelRow(payload: { name: string; city: string; rooms: number }) {
+  return supabase.from("hotels").insert(payload).select(BASE_HOTEL_COLUMNS).single();
 }
 
 export type RowKey = "brojNocenja" | "ukupanPrihod" | "adr" | "popunjenost" | "revpar";
@@ -259,6 +319,7 @@ interface HotelContextValue {
   addHotel: (hotel: NewHotelInput) => Promise<void>;
   deleteHotel: (id: string) => Promise<void>;
   updateHotelPrice: (id: string, price: number) => Promise<void>;
+  updateRoomPrices: (id: string, prices: Partial<Record<RoomTypeKey, number>>) => Promise<void>;
   monthInfo: MonthInfo | null;
   monthEntries: Record<string, EntryData>;
   getEntryForDate: (dateISO: string) => EntryData | null;
@@ -301,13 +362,10 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     (async () => {
-      const { data, error } = await supabase
-        .from("hotels")
-        .select("id, name, city, rooms, current_price, created_at")
-        .order("created_at", { ascending: true });
+      const { data, error } = await fetchHotelsList();
       if (!active) return;
       if (!error && data) {
-        setHotels(data.map(h => ({ id: h.id, name: h.name, city: h.city, rooms: h.rooms, currentPrice: h.current_price })));
+        setHotels(data.map(hotelRowToSavedHotel));
       } else if (error) {
         console.error("Failed to load hotels from Supabase:", error.message);
       }
@@ -377,13 +435,9 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
   }, [selectedHotelObj, monthInfo]);
 
   const addHotel = useCallback(async (hotel: NewHotelInput) => {
-    const { data, error } = await supabase
-      .from("hotels")
-      .insert({ name: hotel.name, city: hotel.city, rooms: hotel.rooms })
-      .select("id, name, city, rooms, current_price, created_at")
-      .single();
+    const { data, error } = await insertHotelRow({ name: hotel.name, city: hotel.city, rooms: hotel.rooms });
     if (!error && data) {
-      setHotels(prev => [...prev, { id: data.id, name: data.name, city: data.city, rooms: data.rooms, currentPrice: data.current_price }]);
+      setHotels(prev => [...prev, hotelRowToSavedHotel(data)]);
       setSelectedHotel(data.id);
     } else if (error) {
       console.error("Failed to add hotel in Supabase:", error.message);
@@ -406,6 +460,36 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
       setHotels(prev => prev.map(h => (h.id === id ? { ...h, currentPrice: price } : h)));
     } else {
       console.error("Failed to update hotel price in Supabase:", error.message);
+    }
+  }, []);
+
+  // Partial update — pass only the room types being changed (a bulk "save all 4" or a single
+  // per-row "Prihvati" both go through this one function).
+  const updateRoomPrices = useCallback(async (id: string, prices: Partial<Record<RoomTypeKey, number>>) => {
+    const columnByKey: Record<RoomTypeKey, string> = {
+      cls: "price_cls", dplx: "price_dplx", superior: "price_superior", king: "price_king",
+    };
+    const payload: Record<string, number> = {};
+    for (const key of Object.keys(prices) as RoomTypeKey[]) {
+      const value = prices[key];
+      if (value !== undefined) payload[columnByKey[key]] = value;
+    }
+    if (Object.keys(payload).length === 0) return;
+
+    const { error } = await supabase.from("hotels").update(payload).eq("id", id);
+    if (!error) {
+      setHotels(prev => prev.map(h => {
+        if (h.id !== id) return h;
+        return {
+          ...h,
+          priceCls: prices.cls ?? h.priceCls,
+          priceDplx: prices.dplx ?? h.priceDplx,
+          priceSuperior: prices.superior ?? h.priceSuperior,
+          priceKing: prices.king ?? h.priceKing,
+        };
+      }));
+    } else {
+      console.error("Failed to update room prices in Supabase:", error.message);
     }
   }, []);
 
@@ -603,6 +687,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
     addHotel,
     deleteHotel,
     updateHotelPrice,
+    updateRoomPrices,
     monthInfo,
     monthEntries,
     getEntryForDate,
