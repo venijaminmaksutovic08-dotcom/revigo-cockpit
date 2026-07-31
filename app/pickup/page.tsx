@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { BarChart3, TrendingUp, TrendingDown, Minus, CalendarDays } from "lucide-react";
-import { useHotel, ROW_DEFS, formatNumber, type RowKey, type RowDef } from "../context/HotelContext";
+import { useHotel, ROW_DEFS, PICKUP_ROW_KEYS, formatNumber, type RowKey, type RowDef } from "../context/HotelContext";
 import {
   fetchLatestReportDate, fetchDayReport, fetchPickupPeriodTotals,
   todayISO, dateParts, toISO, formatDateSr,
@@ -25,6 +25,10 @@ function fmtSigned(n: number, rowDef: RowDef): string {
   const formatted = formatNumber(n, rowDef);
   return n > 0 ? `+${formatted}` : formatted;
 }
+
+// Pickup is only tracked for Room Nights and Revenue (see PICKUP_ROW_KEYS) — ADR/Occupancy/RevPAR
+// are ratios and never get a pickup row here.
+const PICKUP_ROW_DEFS = ROW_DEFS.filter(r => PICKUP_ROW_KEYS.includes(r.key));
 
 function inputStyle(): React.CSSProperties {
   return {
@@ -183,7 +187,7 @@ export default function PickupPage() {
                 </tr>
               </thead>
               <tbody>
-                {ROW_DEFS.map(rowDef => {
+                {PICKUP_ROW_DEFS.map(rowDef => {
                   const value = dayPickupValue(dayRow, rowDef.key);
                   const isPos = value !== null && value > 0;
                   const isNeg = value !== null && value < 0;
@@ -284,7 +288,7 @@ export default function PickupPage() {
                 </tr>
               </thead>
               <tbody>
-                {ROW_DEFS.map(rowDef => {
+                {PICKUP_ROW_DEFS.map(rowDef => {
                   const daysA = totalsA.daysWithData[rowDef.key];
                   const daysB = totalsB.daysWithData[rowDef.key];
                   const hasA = daysA > 0;

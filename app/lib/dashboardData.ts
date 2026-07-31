@@ -740,12 +740,14 @@ export async function importActualsMonths(hotelId: string, months: ParsedMonthMe
         popunjenost: normalizePercent(m.occupancy.target),
         revpar: numOrZero(m.revpar.target),
       },
+      // Pickup only tracked for additive metrics — ADR/Occupancy/RevPAR are ratios, where a
+      // day-over-day delta isn't meaningful (see PICKUP_ROW_KEYS in HotelContext.tsx).
       pickup: {
         brojNocenja: numOrZero(m.roomNights.pickup),
         ukupanPrihod: numOrZero(m.revenue.pickup),
-        adr: numOrZero(m.adr.pickup),
-        popunjenost: normalizePercent(m.occupancy.pickup),
-        revpar: numOrZero(m.revpar.pickup),
+        adr: 0,
+        popunjenost: 0,
+        revpar: 0,
       },
     };
 

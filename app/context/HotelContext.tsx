@@ -111,6 +111,13 @@ export const COLUMN_DEFS: ColumnDef[] = [
   { key: "pickup", label: "Pickup" },
 ];
 
+// Pickup only makes sense for additive metrics (Room Nights, Revenue) — ADR/Occupancy/RevPAR are
+// ratios, where "how much did this move since yesterday" isn't a meaningful figure (and source
+// files have been observed reporting garbage there, e.g. an ADR pickup cell literally mirroring
+// Revenue's). This is the single source of truth for which rows carry a real pickup value
+// anywhere pickup is captured, entered, or displayed.
+export const PICKUP_ROW_KEYS: RowKey[] = ["brojNocenja", "ukupanPrihod"];
+
 // Maps each daily_reports jsonb column to the period's column key.
 const DB_COLUMN_BY_KEY: Record<ColumnKey, keyof Pick<DailyReportRow, "last_year" | "same_day_last_year" | "on_books_yesterday" | "on_books_today" | "target" | "pickup">> = {
   prosleGodine: "last_year",

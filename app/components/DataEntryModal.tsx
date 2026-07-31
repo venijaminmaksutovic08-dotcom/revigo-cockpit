@@ -6,6 +6,7 @@ import {
   ROW_DEFS,
   COLUMN_DEFS,
   MONTHS_SR,
+  PICKUP_ROW_KEYS,
   type EntryData,
   type RowKey,
   type ColumnKey,
@@ -174,14 +175,27 @@ export default function DataEntryModal({ hotel, dateLabel, initialData, initialO
                     >
                       {rowDef.label}
                     </td>
-                    {COLUMN_DEFS.map(col => (
-                      <td key={col.key} style={{ padding: "6px 10px" }}>
-                        <NumberCell
-                          value={values[col.key]}
-                          onChange={v => setCell(rowDef.key, col.key, v)}
-                        />
-                      </td>
-                    ))}
+                    {COLUMN_DEFS.map(col => {
+                      const pickupNotApplicable = col.key === "pickup" && !PICKUP_ROW_KEYS.includes(rowDef.key);
+                      return (
+                        <td key={col.key} style={{ padding: "6px 10px" }}>
+                          {pickupNotApplicable ? (
+                            <div
+                              className="flex items-center justify-center"
+                              style={{ height: 34, fontSize: 13, color: "#d1d5db" }}
+                              title="Pickup se ne prati za odnose (ADR, Popunjenost, RevPAR)"
+                            >
+                              —
+                            </div>
+                          ) : (
+                            <NumberCell
+                              value={values[col.key]}
+                              onChange={v => setCell(rowDef.key, col.key, v)}
+                            />
+                          )}
+                        </td>
+                      );
+                    })}
                     <td style={{ padding: "10px", textAlign: "right", fontSize: 13, fontWeight: 600, color: pickup >= 0 ? "#16a34a" : "#dc2626" }}>
                       {pickup >= 0 ? "+" : ""}{pickup.toLocaleString("sr-RS")}
                     </td>

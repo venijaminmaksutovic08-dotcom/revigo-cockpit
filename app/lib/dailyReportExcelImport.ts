@@ -300,19 +300,27 @@ const COLUMN_LABELS: Record<keyof MetricColumnValues, string> = {
   pickup: "Pickup",
 };
 
+// Pickup is only meaningful for additive metrics (Room Nights, Revenue) — ADR/Occupancy/RevPAR
+// are ratios, and the file's Pickup column has been observed reporting garbage for them (e.g. an
+// ADR pickup cell that just mirrors Revenue's). Those three never capture a pickup value at all.
+const PICKUP_METRIC_ROW_KEYS: MetricRowKey[] = ["roomNights", "revenue"];
+
 // Converts one metric's four/five columns into the app's per-column EntryData shape. A missing
 // (null) cell is stored as 0 in EntryData — the daily_reports jsonb columns are numeric and can't
 // carry a separate "missing" marker — but every missing cell is also recorded in `missing` so the
 // caller can warn about it BEFORE the user saves, instead of a silent fake zero going through
-// unannounced.
-function metricToRowValues(m: MetricColumnValues, isPercent: boolean, metricLabel: string, missing: string[]) {
+// unannounced. capturePickup is false for metrics where pickup isn't tracked at all — a null
+// pickup on those never gets warned about, since it was never expected in the first place.
+function metricToRowValues(m: MetricColumnValues, isPercent: boolean, metricLabel: string, missing: string[], capturePickup: boolean) {
   const norm = (v: number | null): number => {
     if (v === null) return 0;
     return isPercent ? normalizePercent(v) : v;
   };
-  (Object.keys(COLUMN_LABELS) as (keyof MetricColumnValues)[]).forEach(key => {
-    if (m[key] === null) missing.push(`${metricLabel} — ${COLUMN_LABELS[key]}`);
-  });
+  (Object.keys(COLUMN_LABELS) as (keyof MetricColumnValues)[])
+    .filter(key => capturePickup || key !== "pickup")
+    .forEach(key => {
+      if (m[key] === null) missing.push(`${metricLabel} — ${COLUMN_LABELS[key]}`);
+    });
 
   return {
     prosleGodine: norm(m.totalLastYear),
@@ -320,7 +328,7 @@ function metricToRowValues(m: MetricColumnValues, isPercent: boolean, metricLabe
     naKnjigamaJuce: norm(m.yesterday),
     naKnjigamaDanas: norm(m.today),
     target: norm(m.target),
-    pickup: norm(m.pickup),
+    pickup: capturePickup ? norm(m.pickup) : 0,
   };
 }
 
@@ -330,11 +338,12 @@ function metricToRowValues(m: MetricColumnValues, isPercent: boolean, metricLabe
 export function monthMetricsToEntryData(m: ParsedMonthMetrics): { data: EntryData; missingFields: string[] } {
   const missing: string[] = [];
   const data = emptyEntryData();
-  data.brojNocenja = metricToRowValues(m.roomNights, false, "Room Nights", missing);
-  data.ukupanPrihod = metricToRowValues(m.revenue, false, "Revenue", missing);
-  data.adr = metricToRowValues(m.adr, false, "ADR", missing);
-  data.popunjenost = metricToRowValues(m.occupancy, true, "% Occ.", missing);
-  data.revpar = metricToRowValues(m.revpar, false, "RevPAR", missing);
+  const capturePickup = (key: MetricRowKey) => PICKUP_METRIC_ROW_KEYS.includes(key);
+  data.brojNocenja = metricToRowValues(m.roomNights, false, "Room Nights", missing, capturePickup("roomNights"));
+  data.ukupanPrihod = metricToRowValues(m.revenue, false, "Revenue", missing, capturePickup("revenue"));
+  data.adr = metricToRowValues(m.adr, false, "ADR", missing, capturePickup("adr"));
+  data.popunjenost = metricToRowValues(m.occupancy, true, "% Occ.", missing, capturePickup("occupancy"));
+  data.revpar = metricToRowValues(m.revpar, false, "RevPAR", missing, capturePickup("revpar"));
   return { data, missingFields: missing };
 }
 
