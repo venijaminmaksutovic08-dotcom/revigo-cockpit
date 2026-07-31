@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useState, useEffect, useMemo, useCallback } from "react";
-import { supabase, type DailyReportRow, type MonthlyTargetRow } from "../lib/supabaseClient";
+import { supabase, upsertDailyReportRow, type DailyReportRow, type MonthlyTargetRow } from "../lib/supabaseClient";
 import type { KPIData, KPIStatus } from "../data/hotelData";
 
 export interface SavedHotel {
@@ -79,7 +79,7 @@ async function insertHotelRow(payload: { name: string; city: string; rooms: numb
 }
 
 export type RowKey = "brojNocenja" | "ukupanPrihod" | "adr" | "popunjenost" | "revpar";
-export type ColumnKey = "prosleGodine" | "istiDanProsleGodine" | "naKnjigamaJuce" | "naKnjigamaDanas" | "target";
+export type ColumnKey = "prosleGodine" | "istiDanProsleGodine" | "naKnjigamaJuce" | "naKnjigamaDanas" | "target" | "pickup";
 export type DayStatus = "none" | "green" | "yellow" | "red";
 
 export interface RowDef {
@@ -108,15 +108,17 @@ export const COLUMN_DEFS: ColumnDef[] = [
   { key: "naKnjigamaJuce", label: "Na knjigama juče" },
   { key: "naKnjigamaDanas", label: "Na knjigama danas" },
   { key: "target", label: "Target" },
+  { key: "pickup", label: "Pickup" },
 ];
 
 // Maps each daily_reports jsonb column to the period's column key.
-const DB_COLUMN_BY_KEY: Record<ColumnKey, keyof Pick<DailyReportRow, "last_year" | "same_day_last_year" | "on_books_yesterday" | "on_books_today" | "target">> = {
+const DB_COLUMN_BY_KEY: Record<ColumnKey, keyof Pick<DailyReportRow, "last_year" | "same_day_last_year" | "on_books_yesterday" | "on_books_today" | "target" | "pickup">> = {
   prosleGodine: "last_year",
   istiDanProsleGodine: "same_day_last_year",
   naKnjigamaJuce: "on_books_yesterday",
   naKnjigamaDanas: "on_books_today",
   target: "target",
+  pickup: "pickup",
 };
 
 export const MONTHS_SR = [
@@ -175,7 +177,7 @@ export type RowValues = Record<ColumnKey, number>;
 export type EntryData = Record<RowKey, RowValues>;
 
 function emptyRowValues(): RowValues {
-  return { prosleGodine: 0, istiDanProsleGodine: 0, naKnjigamaJuce: 0, naKnjigamaDanas: 0, target: 0 };
+  return { prosleGodine: 0, istiDanProsleGodine: 0, naKnjigamaJuce: 0, naKnjigamaDanas: 0, target: 0, pickup: 0 };
 }
 
 export function emptyEntryData(): EntryData {
@@ -508,11 +510,7 @@ export function HotelProvider({ children }: { children: React.ReactNode }) {
         ...entryDataToDbColumns(data),
       };
 
-      const { data: saved, error } = await supabase
-        .from("daily_reports")
-        .upsert(payload, { onConflict: "hotel_id,report_date" })
-        .select("*")
-        .single();
+      const { data: saved, error } = await upsertDailyReportRow(payload);
 
       if (!error && saved) {
         setMonthEntries(prev => ({ ...prev, [dateISO]: dbRowToEntryData(saved) }));

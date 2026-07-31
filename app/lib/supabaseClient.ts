@@ -23,7 +23,27 @@ export interface DailyReportRow {
   on_books_yesterday: Record<string, number>;
   on_books_today: Record<string, number>;
   target: Record<string, number>;
+  // Optional: the pickup column migration may not be applied yet in every environment — see
+  // upsertDailyReportRow below, which degrades gracefully when it's missing.
+  pickup?: Record<string, number>;
   created_at: string;
+}
+
+function isMissingColumnError(error: { message: string } | null): boolean {
+  if (!error) return false;
+  const msg = error.message.toLowerCase();
+  return msg.includes("column") && (msg.includes("schema cache") || msg.includes("does not exist"));
+}
+
+// Upserts a daily_reports row, tolerating an unapplied `pickup` migration: if the column doesn't
+// exist yet in this environment, retries once with `pickup` stripped from the payload rather than
+// failing the whole save over one field that hasn't been migrated in.
+export async function upsertDailyReportRow(payload: Record<string, unknown>) {
+  const first = await supabase.from("daily_reports").upsert(payload, { onConflict: "hotel_id,report_date" }).select("*").single();
+  if (!first.error || !isMissingColumnError(first.error) || !("pickup" in payload)) return first;
+  console.error("daily_reports.pickup column unavailable (run the latest migration?) — retrying without it:", first.error.message);
+  const { pickup: _pickup, ...withoutPickup } = payload;
+  return supabase.from("daily_reports").upsert(withoutPickup, { onConflict: "hotel_id,report_date" }).select("*").single();
 }
 
 export interface OnBooksSnapshotRow {

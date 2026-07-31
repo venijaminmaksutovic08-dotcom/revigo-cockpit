@@ -154,7 +154,7 @@ export default function DataEntryModal({ hotel, dateLabel, initialData, initialO
                     {col.label}
                   </th>
                 ))}
-                <th style={{ textAlign: "right", fontSize: 11, fontWeight: 600, color: "#6b7280", padding: "0 10px 10px", minWidth: 110 }}>Pickup</th>
+                <th style={{ textAlign: "right", fontSize: 11, fontWeight: 600, color: "#6b7280", padding: "0 10px 10px", minWidth: 110 }} title="Računato: danas − juče">Razlika (danas−juče)</th>
                 <th style={{ textAlign: "right", fontSize: 11, fontWeight: 600, color: "#6b7280", padding: "0 10px 10px", minWidth: 110 }}>Gap do targeta</th>
                 <th style={{ textAlign: "right", fontSize: 11, fontWeight: 600, color: "#6b7280", padding: "0 10px 10px", minWidth: 110 }}>Ostvarenost %</th>
               </tr>

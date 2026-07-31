@@ -1,4 +1,4 @@
-import { supabase, type DailyReportRow, type MonthlyTargetRow, type OnBooksSnapshotRow } from "./supabaseClient";
+import { supabase, upsertDailyReportRow, type DailyReportRow, type MonthlyTargetRow, type OnBooksSnapshotRow } from "./supabaseClient";
 import {
   ROW_DEFS,
   ROW_TARGET_FIELD,
@@ -666,11 +666,16 @@ export async function importActualsMonths(hotelId: string, months: ParsedMonthMe
         popunjenost: normalizePercent(m.occupancy.target),
         revpar: numOrZero(m.revpar.target),
       },
+      pickup: {
+        brojNocenja: numOrZero(m.roomNights.pickup),
+        ukupanPrihod: numOrZero(m.revenue.pickup),
+        adr: numOrZero(m.adr.pickup),
+        popunjenost: normalizePercent(m.occupancy.pickup),
+        revpar: numOrZero(m.revpar.pickup),
+      },
     };
 
-    const { error } = await supabase
-      .from("daily_reports")
-      .upsert(payload, { onConflict: "hotel_id,report_date" });
+    const { error } = await upsertDailyReportRow(payload);
     if (error) console.error("Failed to import monthly actuals:", error.message);
 
     const yearMonth = yearMonthOf(reportDate);

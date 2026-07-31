@@ -30,6 +30,7 @@ export interface MetricColumnValues {
   yesterday: number | null;
   today: number | null;
   target: number | null;
+  pickup: number | null;
 }
 
 export interface ParsedMonthMetrics {
@@ -123,7 +124,7 @@ function matchMonth(norm: string): number | null {
 }
 
 function emptyMetric(): MetricColumnValues {
-  return { totalLastYear: null, sameDayLastYear: null, yesterday: null, today: null, target: null };
+  return { totalLastYear: null, sameDayLastYear: null, yesterday: null, today: null, target: null, pickup: null };
 }
 
 function emptyMonthMetrics(monthNumber: number): ParsedMonthMetrics {
@@ -143,6 +144,7 @@ interface OnBooksColumnMap {
   yesterday?: number;
   today?: number;
   target?: number;
+  pickup?: number;
 }
 
 function scanRowForColumnLabels(row: unknown[]): OnBooksColumnMap {
@@ -158,6 +160,7 @@ function scanRowForColumnLabels(row: unknown[]): OnBooksColumnMap {
     else if (norm === "yesterday" || norm.includes("yesterday")) cols.yesterday = c;
     else if (norm === "today" || norm.includes("today")) cols.today = c;
     else if (norm === "target" || norm.includes("target")) cols.target = c;
+    else if (norm === "pickup" || norm.includes("pickup")) cols.pickup = c;
   }
   return cols;
 }
@@ -192,6 +195,7 @@ function readMetricRow(row: unknown[], cols: OnBooksColumnMap): MetricColumnValu
     yesterday: cols.yesterday !== undefined ? toNumberOrMissing(row[cols.yesterday]) : null,
     today: cols.today !== undefined ? toNumberOrMissing(row[cols.today]) : null,
     target: cols.target !== undefined ? toNumberOrMissing(row[cols.target]) : null,
+    pickup: cols.pickup !== undefined ? toNumberOrMissing(row[cols.pickup]) : null,
   };
 }
 
@@ -273,7 +277,8 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
     const occPct = occToday !== null && occToday !== 0 && Math.abs(occToday) <= 1 ? occToday * 100 : occToday;
     console.log(
       `${name}: yesterday(rooms=${m.roomNights.yesterday}, revenue=${m.revenue.yesterday}) ` +
-      `today(rooms=${m.roomNights.today}, revenue=${m.revenue.today}, adr=${m.adr.today}, occ=${occPct}, revpar=${m.revpar.today})`
+      `today(rooms=${m.roomNights.today}, revenue=${m.revenue.today}, adr=${m.adr.today}, occ=${occPct}, revpar=${m.revpar.today}) ` +
+      `pickup(rooms=${m.roomNights.pickup}, revenue=${m.revenue.pickup})`
     );
   }
 
@@ -292,6 +297,7 @@ const COLUMN_LABELS: Record<keyof MetricColumnValues, string> = {
   yesterday: "Na knjigama juče",
   today: "Na knjigama danas",
   target: "Target",
+  pickup: "Pickup",
 };
 
 // Converts one metric's four/five columns into the app's per-column EntryData shape. A missing
@@ -314,6 +320,7 @@ function metricToRowValues(m: MetricColumnValues, isPercent: boolean, metricLabe
     naKnjigamaJuce: norm(m.yesterday),
     naKnjigamaDanas: norm(m.today),
     target: norm(m.target),
+    pickup: norm(m.pickup),
   };
 }
 
