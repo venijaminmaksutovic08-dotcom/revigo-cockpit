@@ -31,6 +31,11 @@ export type ConfidenceLabel = "visoka" | "srednja" | "niska";
 
 export interface RecommendationInputs {
   onBooksOccPct: number | null;          // current on-books occupancy %, e.g. 68
+  // True when onBooksOccPct came from that month's on-books pace (rooms on the books for the
+  // whole month vs. the monthly target) rather than a specific day's own pace — a future date has
+  // no per-day pace yet, so the reason chip must say so honestly ("(mesečno)") rather than imply
+  // this is that exact day's number.
+  onBooksOccPctIsMonthly: boolean;
   targetOccPct: number | null;           // monthly target occupancy %, e.g. 55
   onBooksNights: number | null;          // current on-books room-nights for the period
   sameDayLastYearNights: number | null;  // same-day-last-year room-nights
@@ -171,8 +176,9 @@ export function buildReasonChips(
 
   if (parts.paceVsTarget !== null && Math.abs(parts.paceVsTarget) >= deadband
     && inputs.onBooksOccPct != null && inputs.targetOccPct != null) {
+    const label = inputs.onBooksOccPctIsMonthly ? "Popunjenost (mesečno)" : "Popunjenost";
     chips.push({
-      text: `Popunjenost ${Math.round(inputs.onBooksOccPct)}% vs ${Math.round(inputs.targetOccPct)}% plan`,
+      text: `${label} ${Math.round(inputs.onBooksOccPct)}% vs ${Math.round(inputs.targetOccPct)}% plan`,
       tone: parts.paceVsTarget > 0 ? "positive" : "negative",
     });
   }
@@ -239,12 +245,15 @@ export function computeRecommendation(inputs: RecommendationInputs): Recommendat
   const nudgePercent = applyConfidenceDamper(nudgePercentRaw, confidence);
   const verdict = computeVerdict(nudgePercent);
 
+  const signalLabel = (key: keyof typeof SIGNAL_LABELS): string =>
+    key === "paceVsTarget" && inputs.onBooksOccPctIsMonthly ? "Popunjenost (mesečno) vs plan" : SIGNAL_LABELS[key];
+
   const usedSignals = (Object.keys(SIGNAL_LABELS) as (keyof typeof SIGNAL_LABELS)[])
     .filter(key => components.find(c => c.key === key)?.value !== null)
-    .map(key => SIGNAL_LABELS[key]);
+    .map(signalLabel);
   const missingSignals = (Object.keys(SIGNAL_LABELS) as (keyof typeof SIGNAL_LABELS)[])
     .filter(key => components.find(c => c.key === key)?.value === null)
-    .map(key => SIGNAL_LABELS[key]);
+    .map(signalLabel);
 
   const reasons = buildReasonChips(inputs, { paceVsTarget, competitorGap, paceVsLastYear });
 

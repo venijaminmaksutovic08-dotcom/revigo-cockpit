@@ -7,9 +7,9 @@ import {
 } from "lucide-react";
 import { useHotel, MONTHS_SR, ROOM_TYPE_DEFS, type RoomTypeKey } from "../context/HotelContext";
 import {
-  fetchLatestReportSnapshot, fetchMonthlyTargetFor,
+  fetchLatestReportSnapshot, fetchMonthlyTargetFor, fetchLatestOnBooksForMonth,
   todayISO, shiftDays, dateParts, toISO, yearMonthOf, formatDateSr,
-  type ReportSnapshot,
+  type ReportSnapshot, type MonthlyOnBooksPace,
 } from "../lib/dashboardData";
 import type { MonthlyTargetRow } from "../lib/supabaseClient";
 import { getEurRsdRate } from "../lib/fxRate";
@@ -107,22 +107,28 @@ export default function PreporukaPage() {
   // ── On-books pace + target (same source as Dashboard/poredjenje) ───────────
   const [snapshot, setSnapshot] = useState<ReportSnapshot | null>(null);
   const [monthlyTarget, setMonthlyTarget] = useState<MonthlyTargetRow | null>(null);
+  // Monthly on-books pace (rooms on the books for the whole stay month vs. target) — fetched
+  // alongside the per-day snapshot and used ONLY as a fallback when that day has no on-books pace
+  // of its own yet (a future date, before its month has started reporting daily actuals).
+  const [monthlyPace, setMonthlyPace] = useState<MonthlyOnBooksPace | null>(null);
   const [loadingPace, setLoadingPace] = useState(false);
 
   useEffect(() => {
-    if (!selectedHotel || !selectedDate) { setSnapshot(null); setMonthlyTarget(null); return; }
+    if (!selectedHotel || !selectedDate) { setSnapshot(null); setMonthlyTarget(null); setMonthlyPace(null); return; }
     let cancelled = false;
     setLoadingPace(true);
     (async () => {
       const { year, month } = dateParts(selectedDate);
       const monthStart = toISO(year, month, 1);
-      const [snap, target] = await Promise.all([
+      const [snap, target, monthPace] = await Promise.all([
         fetchLatestReportSnapshot(selectedHotel, monthStart, selectedDate),
         fetchMonthlyTargetFor(selectedHotel, yearMonthOf(selectedDate)),
+        fetchLatestOnBooksForMonth(selectedHotel, month, year),
       ]);
       if (cancelled) return;
       setSnapshot(snap);
       setMonthlyTarget(target);
+      setMonthlyPace(monthPace);
       setLoadingPace(false);
     })();
     return () => { cancelled = true; };
@@ -279,7 +285,15 @@ export default function PreporukaPage() {
 
   // ── Recommendation ──────────────────────────────────────────────────────────
 
-  const onBooksOccPct = snapshot ? snapshot.popunjenost : null;
+  // Per-day pace of exactly 0 means "no report for this date yet" (same 0-means-missing
+  // convention as the rest of the app) — most relevant for future dates, which have no daily
+  // pace at all until their month starts reporting actuals. When that's the case, fall back to
+  // this month's on-books pace (rooms on the books for the whole month vs. target) instead.
+  const dailyOccPct = snapshot && snapshot.popunjenost !== 0 ? snapshot.popunjenost : null;
+  const monthlyOccPct = monthlyPace ? monthlyPace.occupancyOnbooks : null;
+  const onBooksOccPctIsMonthly = dailyOccPct === null && monthlyOccPct !== null;
+  const onBooksOccPct = dailyOccPct ?? monthlyOccPct;
+
   const onBooksNights = snapshot ? snapshot.brojNocenja : null;
   // Same-day-last-year of 0 means "not entered" — same convention used everywhere else in the app
   // (e.g. the On-Books YoY cards), since a real hotel practically never has a literal 0 on file.
@@ -291,9 +305,9 @@ export default function PreporukaPage() {
   const nearbyEventLabel = events[0] ? truncate(events[0].title, 40) : null;
 
   const inputs: RecommendationInputs = useMemo(() => ({
-    onBooksOccPct, targetOccPct, onBooksNights, sameDayLastYearNights,
+    onBooksOccPct, onBooksOccPctIsMonthly, targetOccPct, onBooksNights, sameDayLastYearNights,
     competitorAvgEur, ourRefPriceEur, isWeekend, hasNearbyEvent, nearbyEventLabel,
-  }), [onBooksOccPct, targetOccPct, onBooksNights, sameDayLastYearNights, competitorAvgEur, ourRefPriceEur, isWeekend, hasNearbyEvent, nearbyEventLabel]);
+  }), [onBooksOccPct, onBooksOccPctIsMonthly, targetOccPct, onBooksNights, sameDayLastYearNights, competitorAvgEur, ourRefPriceEur, isWeekend, hasNearbyEvent, nearbyEventLabel]);
 
   const recommendation = useMemo(() => computeRecommendation(inputs), [inputs]);
 

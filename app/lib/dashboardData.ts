@@ -373,6 +373,46 @@ export async function fetchPeriodAggregate(hotelId: string, startISO: string, en
   };
 }
 
+// ── Pickup (Pickup Analiza) ─────────────────────────────────────────────────────
+// Unlike on_books_today (a running total as of each row's report_date — never sum across rows,
+// see fetchPeriodAggregate above), pickup is already a per-day delta straight from the file's own
+// Pickup column, so summing it across the days in a range IS the correct "total pickup for this
+// period" — it does not double-count anything. A stored pickup of exactly 0 means "not captured"
+// (same 0-means-missing convention used throughout this app), so those days are excluded from
+// both the total and the day count rather than being read as a real zero-movement day.
+export interface PickupPeriodTotals {
+  totals: Record<RowKey, number>;
+  daysWithData: Record<RowKey, number>;
+  daysInRange: number;
+}
+
+export async function fetchPickupPeriodTotals(hotelId: string, startISO: string, endISO: string): Promise<PickupPeriodTotals> {
+  const { data, error } = await supabase
+    .from("daily_reports")
+    .select("report_date, pickup")
+    .eq("hotel_id", hotelId)
+    .gte("report_date", startISO)
+    .lte("report_date", endISO)
+    .order("report_date", { ascending: true });
+
+  if (error) console.error("Failed to load pickup period totals:", error.message);
+  const rows = (data ?? []) as { report_date: string; pickup?: Record<string, number> }[];
+
+  const totals = {} as Record<RowKey, number>;
+  const daysWithData = {} as Record<RowKey, number>;
+  for (const rowDef of ROW_DEFS) { totals[rowDef.key] = 0; daysWithData[rowDef.key] = 0; }
+
+  for (const row of rows) {
+    const p = row.pickup ?? {};
+    for (const rowDef of ROW_DEFS) {
+      const v = Number(p[rowDef.key] ?? 0);
+      if (v !== 0) { totals[rowDef.key] += v; daysWithData[rowDef.key]++; }
+    }
+  }
+
+  return { totals, daysWithData, daysInRange: rows.length };
+}
+
 export interface ReportSnapshot {
   reportDate: string;
   brojNocenja: number;
@@ -558,6 +598,40 @@ export async function saveOnBooksForDate(hotelId: string, dateISO: string, entri
     .from("onbooks_snapshots")
     .upsert(payload, { onConflict: "hotel_id,snapshot_date,stay_month,stay_year" });
   if (error) console.error("Failed to save on-books snapshot:", error.message);
+}
+
+export interface MonthlyOnBooksPace {
+  snapshotDate: string;
+  roomsOnbooks: number;
+  revenueOnbooks: number;
+  occupancyOnbooks: number;
+}
+
+// The latest onbooks_snapshots reading for a specific stay month, regardless of which "as of"
+// date it was recorded under — a monthly-level occupancy pace fallback for Preporuka Cena when a
+// specific day's on-books pace isn't available yet (e.g. a future date with no daily_reports row).
+// An occupancy of exactly 0 means "not entered" (same convention as every other on-books field in
+// this app — see e.g. sameDayLastYearNights in preporuka/page.tsx), so those rows are skipped
+// rather than read as a real 0% pace.
+export async function fetchLatestOnBooksForMonth(hotelId: string, stayMonth: number, stayYear: number): Promise<MonthlyOnBooksPace | null> {
+  const { data, error } = await supabase
+    .from("onbooks_snapshots")
+    .select("snapshot_date, rooms_onbooks, revenue_onbooks, occupancy_onbooks")
+    .eq("hotel_id", hotelId)
+    .eq("stay_month", stayMonth)
+    .eq("stay_year", stayYear)
+    .neq("occupancy_onbooks", 0)
+    .order("snapshot_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) { console.error("Failed to load monthly on-books pace:", error.message); return null; }
+  if (!data) return null;
+  return {
+    snapshotDate: data.snapshot_date,
+    roomsOnbooks: Number(data.rooms_onbooks ?? 0),
+    revenueOnbooks: Number(data.revenue_onbooks ?? 0),
+    occupancyOnbooks: Number(data.occupancy_onbooks ?? 0),
+  };
 }
 
 // Same target stay month one year earlier, measured on the same relative snapshot date one year
