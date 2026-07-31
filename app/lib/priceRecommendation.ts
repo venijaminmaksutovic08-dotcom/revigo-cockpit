@@ -143,8 +143,12 @@ export function computeVerdict(nudgePercent: number): Verdict {
   return "HOLD";
 }
 
-export function suggestedPrice(currentPrice: number | null, nudgePercent: number): number | null {
+// HOLD must mean no price change — a small sub-threshold nudge (e.g. +2%) can still round up to
+// the next 5€ step and look like a move even though the verdict said "hold." Only RAISE/LOWER
+// apply the nudge + rounding; HOLD always returns currentPrice unchanged.
+export function suggestedPrice(currentPrice: number | null, nudgePercent: number, verdict: Verdict): number | null {
   if (currentPrice == null) return null;
+  if (verdict === "HOLD") return currentPrice;
   const raw = currentPrice * (1 + nudgePercent / 100);
   const step = RECOMMENDATION_CONFIG.roundToEur;
   return Math.round(raw / step) * step;

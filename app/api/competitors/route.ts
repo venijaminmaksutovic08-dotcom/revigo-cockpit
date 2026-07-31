@@ -46,12 +46,26 @@ function toResult(p: SerpHotelProperty): CompetitorResult | null {
   };
 }
 
+// SerpAPI signals an exhausted plan/monthly search quota either via HTTP status (429 Too Many
+// Requests, sometimes 402 Payment Required) or an HTTP-200 response whose body still carries an
+// `error` field describing the same thing — the wording isn't perfectly stable, so this matches on
+// keywords rather than an exact string.
+function isQuotaError(status: number, json: SerpHotelsResponse | null): boolean {
+  if (status === 429 || status === 402) return true;
+  const msg = json?.error?.toLowerCase() ?? "";
+  return /quota|limit|run out|exceeded/.test(msg);
+}
+
+type SearchOutcome =
+  | { ok: true; results: CompetitorResult[] }
+  | { ok: false; quotaExceeded: boolean };
+
 async function searchHotels(
   query: string,
   checkin: string,
   checkout: string,
   apiKey: string,
-): Promise<CompetitorResult[]> {
+): Promise<SearchOutcome> {
   const params = new URLSearchParams({
     engine:          "google_hotels",
     q:               query,
@@ -66,12 +80,16 @@ async function searchHotels(
   const res = await fetch(`https://serpapi.com/search.json?${params}`, {
     next: { revalidate: 1800 }, // cache 30 min — Google Hotels costs 3 credits/search
   });
-  if (!res.ok) return [];
 
-  const json: SerpHotelsResponse = await res.json();
-  if (!json.properties?.length) return [];
+  let json: SerpHotelsResponse | null = null;
+  try { json = await res.json(); } catch { json = null; }
 
-  return json.properties.map(toResult).filter((r): r is CompetitorResult => r !== null);
+  if (!res.ok || json?.error) {
+    return { ok: false, quotaExceeded: isQuotaError(res.status, json) };
+  }
+  if (!json?.properties?.length) return { ok: true, results: [] };
+
+  return { ok: true, results: json.properties.map(toResult).filter((r): r is CompetitorResult => r !== null) };
 }
 
 export async function GET(request: NextRequest) {
@@ -91,18 +109,36 @@ export async function GET(request: NextRequest) {
     // Broader, localized phrasing surfaces more local hotels than a bare city name or
     // English "hotels in X" — Google Hotels' relevance ranking responds better to it.
     const primaryQuery = q ? `${q} ${location}` : `hoteli ${location}`;
-    const results = await searchHotels(primaryQuery, checkin, checkout, apiKey);
+    const primary = await searchHotels(primaryQuery, checkin, checkout, apiKey);
+
+    // A quota error means we were BLOCKED, not that there's genuinely no data — callers need to
+    // tell the two apart (see Preporuka Cena's competitor cache), so this is a distinct HTTP 429
+    // rather than the plain `[]` a real empty result returns.
+    if (!primary.ok) {
+      if (primary.quotaExceeded) {
+        return NextResponse.json({ error: "quota_exceeded" }, { status: 429 });
+      }
+      return NextResponse.json([]);
+    }
+
+    const results = primary.results;
 
     // If the primary query came back sparse (a known issue for smaller destinations),
     // retry with a second phrasing and merge in any hotels it turned up that we missed.
     if (!q && results.length < 5) {
-      const fallbackResults = await searchHotels(`hotel ${location} srbija`, checkin, checkout, apiKey);
-      const seen = new Set(results.map(r => r.name.toLowerCase()));
-      for (const r of fallbackResults) {
-        if (!seen.has(r.name.toLowerCase())) {
-          results.push(r);
-          seen.add(r.name.toLowerCase());
+      const fallback = await searchHotels(`hotel ${location} srbija`, checkin, checkout, apiKey);
+      if (fallback.ok) {
+        const seen = new Set(results.map(r => r.name.toLowerCase()));
+        for (const r of fallback.results) {
+          if (!seen.has(r.name.toLowerCase())) {
+            results.push(r);
+            seen.add(r.name.toLowerCase());
+          }
         }
+      } else if (fallback.quotaExceeded && results.length === 0) {
+        // Primary succeeded with zero results and the fallback got blocked by quota — still
+        // report quota-exceeded rather than a false "checked, found nothing".
+        return NextResponse.json({ error: "quota_exceeded" }, { status: 429 });
       }
     }
 
