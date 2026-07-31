@@ -13,7 +13,8 @@ import {
   type DayStatus,
 } from "../context/HotelContext";
 import type { ParsedReportRow } from "../lib/reportImport";
-import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, emptyOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
+import type { ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
+import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, importOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
 
 const WEEKDAYS_SR = ["Pon", "Uto", "Sre", "Čet", "Pet", "Sub", "Ned"];
 
@@ -58,10 +59,13 @@ export default function DataEntryCalendar() {
   const openDate = openDay !== null && monthInfo ? dateToISO(monthInfo.year, monthInfo.month, openDay) : null;
 
   // Load the on-books snapshot for the date being edited whenever the manual entry modal opens.
+  // Deliberately does NOT seed onBooksData with zeros before the fetch resolves — DataEntryModal
+  // only ever mounts once real data is in hand (see the render gate below), so it can never lazily
+  // capture a placeholder zero as its baseline and silently resubmit that as if it were real.
   useEffect(() => {
-    if (mode !== "manual" || !openDate || !selectedHotel) return;
+    if (mode !== "manual" || !openDate || !selectedHotel) { setOnBooksData(null); return; }
     let cancelled = false;
-    setOnBooksData(emptyOnBooksMonths(openDate));
+    setOnBooksData(null);
     fetchOnBooksForDate(selectedHotel, openDate).then(data => { if (!cancelled) setOnBooksData(data); });
     return () => { cancelled = true; };
   }, [mode, openDate, selectedHotel]);
@@ -224,6 +228,23 @@ export default function DataEntryCalendar() {
         />
       )}
 
+      {/* Brief loading state while the on-books snapshot for the date loads — the manual entry
+          modal below only mounts once that fetch resolves (see the effect above), so there's a
+          short gap between choosing "Unesi ručno" and the form appearing. */}
+      {mode === "manual" && openDay !== null && !onBooksData && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center"
+          style={{ background: "rgba(17,24,39,0.4)", backdropFilter: "blur(3px)" }}
+        >
+          <div
+            className="rounded-2xl flex items-center gap-3"
+            style={{ background: "#ffffff", border: "1px solid #e5e7eb", padding: "20px 28px", boxShadow: "0 24px 64px rgba(0,0,0,0.12)" }}
+          >
+            <span style={{ fontSize: 13, color: "#6b7280" }}>Učitavanje...</span>
+          </div>
+        </div>
+      )}
+
       {/* ── Manual entry modal ─────────────────────────────────────────────── */}
       {mode === "manual" && openDay !== null && openDate && onBooksData && (
         <DataEntryModal
@@ -233,7 +254,10 @@ export default function DataEntryCalendar() {
           initialOnBooks={onBooksData}
           onSave={async (data, onBooks) => {
             await saveEntryForDate(openDate, data);
-            if (selectedHotel) await saveOnBooksForDate(selectedHotel, openDate, onBooks);
+            // onBooks is null when the on-books section was never touched from what was loaded —
+            // skip the write entirely rather than resubmit (and potentially zero) an untouched
+            // section. See DataEntryModal's onBooksChanged check.
+            if (selectedHotel && onBooks) await saveOnBooksForDate(selectedHotel, openDate, onBooks);
             closeAll();
           }}
           onClose={closeAll}
@@ -245,10 +269,13 @@ export default function DataEntryCalendar() {
         <ImportReportModal
           hotel={selectedHotelName}
           fixedDate={{ dateISO: openDate, dateLabel }}
-          onConfirm={async (rows: ParsedReportRow[]) => {
+          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[]) => {
             if (rows.length > 0) {
               await saveEntryForDate(openDate, rows[0].data);
               if (selectedHotel) await saveMonthlyTargetIfAbsent(selectedHotel, openDate, rows[0].data);
+              // Same file also has the forward-looking months (e.g. Aug/Sep) — save those as
+              // on-books too, keyed to this same report date, so one daily upload covers both.
+              if (selectedHotel && allMonths.length > 0) await importOnBooksMonths(selectedHotel, allMonths, openDate);
             }
             closeAll();
           }}

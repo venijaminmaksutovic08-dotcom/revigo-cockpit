@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 import { X, FileSpreadsheet, Upload, AlertCircle, CalendarDays } from "lucide-react";
 import { parseReportFile, type ParsedReportRow } from "../lib/reportImport";
-import { parseDailyReportExcelForMonth } from "../lib/dailyReportExcelImport";
+import { parseDailyReportExcelForMonth, type ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { MONTHS_SR } from "../context/HotelContext";
 
 function fmtInt(n: number): string { return Math.round(n).toLocaleString("sr-RS"); }
@@ -19,7 +19,10 @@ interface ImportReportModalProps {
    * is ignored.
    */
   fixedDate?: { dateISO: string; dateLabel: string };
-  onConfirm: (rows: ParsedReportRow[]) => Promise<void>;
+  // allMonths carries every month the wide "Daily report" sheet contained (empty for the generic
+  // per-date parser, which has no concept of months) — so the caller can also import the
+  // forward-looking on-books months (see importOnBooksMonths) from the same parse, no re-upload.
+  onConfirm: (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[]) => Promise<void>;
   onClose: () => void;
 }
 
@@ -44,6 +47,9 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
   // Fields the parser couldn't read (blank cell, Excel error like #REF!/#DIV/0!, unparsable text)
   // — these got saved as 0 below, but the user needs to know they're not a real reading.
   const [missingFields, setMissingFields]     = useState<string[]>([]);
+  // Every month the wide sheet contained, from the same parse `rows` was built from — passed
+  // through to onConfirm so the caller can also import the forward-looking on-books months.
+  const [allMonths, setAllMonths]             = useState<ParsedMonthMetrics[]>([]);
 
   const isSingleDate = Boolean(fixedDate);
 
@@ -53,6 +59,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setError(null);
     setWideMonthLabel(null);
     setMissingFields([]);
+    setAllMonths([]);
 
     // Single-date mode: the report date is always locked to the calendar selection, never read
     // from the file — and this hotel's real export (the wide "Daily report" sheet, one section per
@@ -71,6 +78,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
         setDefaultedHeaders([]);
         setUnmatchedHeaders([]);
         setMissingFields(wide.missingFields);
+        setAllMonths(wide.allMonths);
         setWideMonthLabel(`${MONTHS_SR[monthNumber - 1]} ${fixedDate.dateISO.slice(0, 4)}`);
         setStep("preview");
       } else {
@@ -135,7 +143,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
 
   async function handleConfirm() {
     setSaving(true);
-    await onConfirm(rows);
+    await onConfirm(rows, allMonths);
     setSaving(false);
   }
 
@@ -146,6 +154,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setHadMultipleRows(false);
     setWideMonthLabel(null);
     setMissingFields([]);
+    setAllMonths([]);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 

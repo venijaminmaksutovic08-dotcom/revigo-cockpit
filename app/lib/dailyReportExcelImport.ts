@@ -355,6 +355,11 @@ export interface ParseSingleMonthResult {
   data: EntryData | null;
   missingFields: string[];
   error: string | null;
+  // Every month the file actually contains (the same full parse `data` was drawn from) — lets a
+  // single-date import ALSO save the forward-looking on-books months (e.g. Aug/Sep) via
+  // importOnBooksMonths, without re-parsing the file a second time. Empty when the file couldn't
+  // be parsed at all.
+  allMonths: ParsedMonthMetrics[];
 }
 
 // Single-date import: pull just one month's on-the-books values out of the wide "Daily report"
@@ -363,19 +368,19 @@ export interface ParseSingleMonthResult {
 export async function parseDailyReportExcelForMonth(file: File, monthNumber: number): Promise<ParseSingleMonthResult> {
   const result = await parseDailyReportExcel(file);
   if (!result.sheetFound) {
-    return { sheetFound: false, data: null, missingFields: [], error: null };
+    return { sheetFound: false, data: null, missingFields: [], error: null, allMonths: [] };
   }
   if (result.error) {
-    return { sheetFound: true, data: null, missingFields: [], error: result.error };
+    return { sheetFound: true, data: null, missingFields: [], error: result.error, allMonths: [] };
   }
 
   const month = result.months.find(mm => mm.monthNumber === monthNumber);
   if (!month) {
-    return { sheetFound: true, data: null, missingFields: [], error: `Mesec "${MONTHS_SR[monthNumber - 1]}" nije pronađen u listu "Daily report" ovog fajla.` };
+    return { sheetFound: true, data: null, missingFields: [], error: `Mesec "${MONTHS_SR[monthNumber - 1]}" nije pronađen u listu "Daily report" ovog fajla.`, allMonths: result.months };
   }
 
   const { data, missingFields } = monthMetricsToEntryData(month);
-  return { sheetFound: true, data, missingFields, error: null };
+  return { sheetFound: true, data, missingFields, error: null, allMonths: result.months };
 }
 
 // ── Filename-derived "as of" date ────────────────────────────────────────────────

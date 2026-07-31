@@ -18,7 +18,10 @@ interface DataEntryModalProps {
   dateLabel: string;
   initialData: EntryData;
   initialOnBooks: OnBooksMonthInput[];
-  onSave: (data: EntryData, onBooks: OnBooksMonthInput[]) => Promise<void>;
+  // onBooks is null when the on-books section was never touched from what was loaded — the caller
+  // should skip writing it entirely rather than resubmit (and potentially zero out) something the
+  // user never edited. See onBooksChanged below.
+  onSave: (data: EntryData, onBooks: OnBooksMonthInput[] | null) => Promise<void>;
   onClose: () => void;
 }
 
@@ -26,6 +29,23 @@ function cloneEntry(data: EntryData): EntryData {
   return Object.fromEntries(
     Object.entries(data).map(([rowKey, values]) => [rowKey, { ...values }])
   ) as EntryData;
+}
+
+// True only if the user actually edited an on-books field — never true just because the loaded
+// baseline happened to be zero (a genuinely-empty snapshot resubmitting itself unchanged is not a
+// "change"). This is what stops an edit to an unrelated field elsewhere in this form from silently
+// writing a fresh on-books row (or, worse, zeroing an existing real one).
+function onBooksChanged(current: OnBooksMonthInput[], initial: OnBooksMonthInput[]): boolean {
+  if (current.length !== initial.length) return true;
+  return current.some((e, i) => {
+    const base = initial[i];
+    return !base
+      || e.stayMonth !== base.stayMonth
+      || e.stayYear !== base.stayYear
+      || e.roomsOnbooks !== base.roomsOnbooks
+      || e.revenueOnbooks !== base.revenueOnbooks
+      || e.occupancyOnbooks !== base.occupancyOnbooks;
+  });
 }
 
 function NumberCell({
@@ -88,7 +108,7 @@ export default function DataEntryModal({ hotel, dateLabel, initialData, initialO
 
   async function handleSave() {
     setSaving(true);
-    await onSave(data, onBooks);
+    await onSave(data, onBooksChanged(onBooks, initialOnBooks) ? onBooks : null);
     setSaving(false);
   }
 
