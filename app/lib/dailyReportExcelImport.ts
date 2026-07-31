@@ -53,13 +53,15 @@ export interface ParseDailyReportResult {
 type MetricRowKey = "roomNights" | "revenue" | "adr" | "occupancy" | "revpar";
 
 // Fixed offsets (in rows) from the month-name row to each metric row within its block. Not label
-// text — see module comment.
+// text — see module comment. The month-name row IS the Room Nights row (col A = month, col B =
+// "Room Nights", data starts col C) — there is no separate blank row above it — so roomNights is
+// offset 0, not 1.
 const METRIC_ROW_OFFSETS: { key: MetricRowKey; offset: number }[] = [
-  { key: "roomNights", offset: 1 },
-  { key: "revenue", offset: 2 },
-  { key: "adr", offset: 3 },
-  { key: "occupancy", offset: 4 },
-  { key: "revpar", offset: 5 },
+  { key: "roomNights", offset: 0 },
+  { key: "revenue", offset: 1 },
+  { key: "adr", offset: 2 },
+  { key: "occupancy", offset: 3 },
+  { key: "revpar", offset: 4 },
 ];
 
 const MONTH_KEYWORDS: string[][] = [
@@ -143,27 +145,40 @@ interface OnBooksColumnMap {
   target?: number;
 }
 
+function scanRowForColumnLabels(row: unknown[]): OnBooksColumnMap {
+  const cols: OnBooksColumnMap = {};
+  for (let c = 0; c < row.length; c++) {
+    const norm = normalizeCell(row[c]);
+    if (!norm) continue;
+    // Comparison/delta columns ("Today vs Target", "Today vs Last Year") contain "today" and
+    // "target" as substrings too — skip them so they don't clobber the real columns.
+    if (norm.includes(" vs ")) continue;
+    if (norm.includes("same day last year")) cols.sameDayLastYear = c;
+    else if (norm.includes("total last year")) cols.totalLastYear = c;
+    else if (norm === "yesterday" || norm.includes("yesterday")) cols.yesterday = c;
+    else if (norm === "today" || norm.includes("today")) cols.today = c;
+    else if (norm === "target" || norm.includes("target")) cols.target = c;
+  }
+  return cols;
+}
+
 // Locates the On-the-Books sub-columns by header label, scanned once for the whole sheet (every
 // month's block shares the same physical columns). Requires yesterday+today+target together on
 // one row before accepting it, so a stray cell elsewhere that happens to say "Target" can't be
-// mistaken for the header row.
+// mistaken for the header row. This sheet's real layout splits the header across TWO rows — a
+// group row with "Total Last Year"/"Same Day Last Year" (and a decoy "Target" that belongs to a
+// different column than the real one) directly above a sub-header row with "Yesterday"/"Today"/
+// the real "Target" — so once the anchor row (yesterday+today+target) is found, the row directly
+// above it is also checked for the two Last Year labels and merged in.
 function findColumnMap(raw: unknown[][]): OnBooksColumnMap | null {
   for (let r = 0; r < raw.length; r++) {
-    const row = raw[r] ?? [];
-    const cols: OnBooksColumnMap = {};
-    for (let c = 0; c < row.length; c++) {
-      const norm = normalizeCell(row[c]);
-      if (!norm) continue;
-      // Comparison/delta columns ("Today vs Target", "Today vs Last Year") contain "today" and
-      // "target" as substrings too — skip them so they don't clobber the real columns.
-      if (norm.includes(" vs ")) continue;
-      if (norm.includes("same day last year")) cols.sameDayLastYear = c;
-      else if (norm.includes("total last year")) cols.totalLastYear = c;
-      else if (norm === "yesterday" || norm.includes("yesterday")) cols.yesterday = c;
-      else if (norm === "today" || norm.includes("today")) cols.today = c;
-      else if (norm === "target" || norm.includes("target")) cols.target = c;
-    }
+    const cols = scanRowForColumnLabels(raw[r] ?? []);
     if (cols.yesterday !== undefined && cols.today !== undefined && cols.target !== undefined) {
+      if (r > 0) {
+        const above = scanRowForColumnLabels(raw[r - 1] ?? []);
+        if (cols.totalLastYear === undefined) cols.totalLastYear = above.totalLastYear;
+        if (cols.sameDayLastYear === undefined) cols.sameDayLastYear = above.sameDayLastYear;
+      }
       return cols;
     }
   }
