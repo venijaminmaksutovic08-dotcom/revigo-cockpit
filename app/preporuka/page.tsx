@@ -15,8 +15,11 @@ import type { MonthlyTargetRow } from "../lib/supabaseClient";
 import { getEurRsdRate } from "../lib/fxRate";
 import {
   computeRecommendation, suggestedPrice, verdictLabel,
-  type RecommendationInputs, type Verdict,
+  type RecommendationInputs, type Verdict, type ConfidenceLabel,
 } from "../lib/priceRecommendation";
+import {
+  fetchCompetitorSnapshot, saveCompetitorSnapshot, type CompetitorSnapshotRow,
+} from "../lib/competitorSnapshot";
 import type { CompetitorResult } from "../api/competitors/route";
 import type { EventResult } from "../api/events/route";
 
@@ -42,6 +45,12 @@ const VERDICT_STYLES: Record<Verdict, { bg: string; border: string; color: strin
   RAISE: { bg: "rgba(217,119,6,0.08)", border: "rgba(217,119,6,0.3)", color: "#b45309", icon: TrendingUp },
   HOLD: { bg: "#f3f4f6", border: "#e5e7eb", color: "#6b7280", icon: Minus },
   LOWER: { bg: "rgba(59,130,246,0.08)", border: "rgba(59,130,246,0.3)", color: "#2563eb", icon: TrendingDown },
+};
+
+const CONFIDENCE_STYLES: Record<ConfidenceLabel, { bg: string; border: string; color: string }> = {
+  visoka: { bg: "rgba(22,163,74,0.08)", border: "rgba(22,163,74,0.25)", color: "#16a34a" },
+  srednja: { bg: "rgba(217,119,6,0.08)", border: "rgba(217,119,6,0.25)", color: "#b45309" },
+  niska: { bg: "#f3f4f6", border: "#e5e7eb", color: "#6b7280" },
 };
 
 function fmtEur(n: number): string {
@@ -119,45 +128,101 @@ export default function PreporukaPage() {
     return () => { cancelled = true; };
   }, [selectedHotel, selectedDate]);
 
-  // ── Competitor prices (manual trigger — same SerpAPI feed as the Dashboard's
-  // competitor section, which is credit-metered, so this never auto-fires) ───
-  const [competitorAvgEur, setCompetitorAvgEur] = useState<number | null>(null);
-  const [competitorCount, setCompetitorCount] = useState(0);
-  const [competitorChecked, setCompetitorChecked] = useState(false);
+  // ── Competitor prices — auto-pulled from the same SerpAPI feed as the Dashboard's competitor
+  // section, but cached per (hotel, stay date) in Supabase so a date is only ever queried once:
+  // on load, the cache is checked first; SerpAPI (credit-metered) is only hit when no cached row
+  // exists yet for that date. "Osveži konkurenciju" forces a fresh pull and overwrites the cache. ─
+  const [competitorSnapshot, setCompetitorSnapshot] = useState<CompetitorSnapshotRow | null>(null);
   const [competitorLoading, setCompetitorLoading] = useState(false);
+  const [competitorChecked, setCompetitorChecked] = useState(false);
+
+  const competitorAvgEur = competitorSnapshot?.avg_price_eur ?? null;
+  const competitorCount = competitorSnapshot?.competitor_count ?? 0;
+
+  const runCompetitorFetch = useCallback(async (
+    dateForFetch: string, ownHotelName: string, hotelCity: string,
+  ): Promise<{ avgEur: number | null; count: number }> => {
+    const checkin = dateForFetch;
+    const checkout = shiftDays(dateForFetch, 1);
+    const params = new URLSearchParams({ location: hotelCity, checkin, checkout, ownHotel: ownHotelName });
+    const [res, rate] = await Promise.all([
+      fetch(`/api/competitors?${params}`),
+      getEurRsdRate(),
+    ]);
+    const data: CompetitorResult[] = res.ok ? await res.json() : [];
+    const withPrice = data.filter((r): r is CompetitorResult & { priceExtracted: number } => r.priceExtracted != null);
+    if (withPrice.length === 0) return { avgEur: null, count: 0 };
+    const avgRsd = withPrice.reduce((sum, r) => sum + r.priceExtracted, 0) / withPrice.length;
+    return { avgEur: avgRsd / rate, count: withPrice.length };
+  }, []);
 
   useEffect(() => {
-    setCompetitorAvgEur(null);
-    setCompetitorCount(0);
+    if (!selectedHotel || !selectedDate || !city) {
+      setCompetitorSnapshot(null);
+      setCompetitorChecked(false);
+      return;
+    }
+    let cancelled = false;
     setCompetitorChecked(false);
-  }, [selectedHotel, selectedDate]);
+    setCompetitorLoading(true);
+    (async () => {
+      const cached = await fetchCompetitorSnapshot(selectedHotel, selectedDate);
+      if (cancelled) return;
+      if (cached) {
+        setCompetitorSnapshot(cached);
+        setCompetitorChecked(true);
+        setCompetitorLoading(false);
+        return;
+      }
+      const { avgEur, count } = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
+      if (cancelled) return;
+      const saved = await saveCompetitorSnapshot(selectedHotel, selectedDate, avgEur, count, "auto");
+      if (cancelled) return;
+      setCompetitorSnapshot(saved);
+      setCompetitorChecked(true);
+      setCompetitorLoading(false);
+    })();
+    return () => { cancelled = true; };
+  }, [selectedHotel, selectedDate, city, hotel?.name, runCompetitorFetch]);
 
-  const checkCompetitors = useCallback(async () => {
-    if (!city || competitorLoading) return;
+  // Manual refresh — bypasses the cache and overwrites it with a fresh pull.
+  const refreshCompetitors = useCallback(async () => {
+    if (!selectedHotel || !selectedDate || !city || competitorLoading) return;
     setCompetitorLoading(true);
     try {
-      const checkin = selectedDate;
-      const checkout = shiftDays(selectedDate, 1);
-      const params = new URLSearchParams({ location: city, checkin, checkout, ownHotel: hotel?.name ?? "" });
-      const [res, rate] = await Promise.all([
-        fetch(`/api/competitors?${params}`),
-        getEurRsdRate(),
-      ]);
-      const data: CompetitorResult[] = res.ok ? await res.json() : [];
-      const withPrice = data.filter((r): r is CompetitorResult & { priceExtracted: number } => r.priceExtracted != null);
-      if (withPrice.length > 0) {
-        const avgRsd = withPrice.reduce((sum, r) => sum + r.priceExtracted, 0) / withPrice.length;
-        setCompetitorAvgEur(avgRsd / rate);
-        setCompetitorCount(withPrice.length);
-      } else {
-        setCompetitorAvgEur(null);
-        setCompetitorCount(0);
-      }
+      const { avgEur, count } = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
+      const saved = await saveCompetitorSnapshot(selectedHotel, selectedDate, avgEur, count, "auto");
+      setCompetitorSnapshot(saved);
       setCompetitorChecked(true);
     } finally {
       setCompetitorLoading(false);
     }
-  }, [city, selectedDate, hotel?.name, competitorLoading]);
+  }, [selectedHotel, selectedDate, city, competitorLoading, runCompetitorFetch, hotel?.name]);
+
+  // Manual fallback — only surfaced when the auto pull found nothing for this date. A few typed
+  // EUR prices feed competitorGap the same way an auto pull would, and overwrite the cached row.
+  const [manualCompetitorInput, setManualCompetitorInput] = useState("");
+  const [savingManualCompetitor, setSavingManualCompetitor] = useState(false);
+
+  useEffect(() => { setManualCompetitorInput(""); }, [selectedHotel, selectedDate]);
+
+  const saveManualCompetitorPrices = useCallback(async () => {
+    if (!selectedHotel || !selectedDate || savingManualCompetitor) return;
+    const prices = manualCompetitorInput
+      .split(",")
+      .map(s => Number(s.trim().replace(",", ".")))
+      .filter(n => Number.isFinite(n) && n > 0);
+    if (prices.length === 0) return;
+    setSavingManualCompetitor(true);
+    try {
+      const avgEur = prices.reduce((sum, n) => sum + n, 0) / prices.length;
+      const saved = await saveCompetitorSnapshot(selectedHotel, selectedDate, avgEur, prices.length, "manual");
+      setCompetitorSnapshot(saved);
+      setManualCompetitorInput("");
+    } finally {
+      setSavingManualCompetitor(false);
+    }
+  }, [selectedHotel, selectedDate, manualCompetitorInput, savingManualCompetitor]);
 
   // ── Events (auto — same SerpAPI-backed source as EventsWidget/poredjenje,
   // cached 1hr server-side, and scoped to a whole month like those callers) ──
@@ -250,8 +315,11 @@ export default function PreporukaPage() {
         className="rounded-xl mb-5"
         style={{ background: "#ffffff", border: "1px solid #e5e7eb", boxShadow: "0 1px 4px rgba(0,0,0,0.04)", padding: "16px 18px" }}
       >
-        <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>
+        <div style={{ fontSize: 12, fontWeight: 700, color: "#374151", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 3 }}>
           Trenutne Cene po Noći (EUR)
+        </div>
+        <div style={{ fontSize: 11, color: "#9ca3af", marginBottom: 12 }}>
+          Cene za 2 osobe · noćenje s doručkom (BB)
         </div>
         <div className="flex flex-wrap items-end gap-3">
           {ROOM_TYPE_DEFS.map(def => (
@@ -313,7 +381,7 @@ export default function PreporukaPage() {
           </div>
         </div>
         <button
-          onClick={checkCompetitors}
+          onClick={refreshCompetitors}
           disabled={competitorLoading || !city}
           className="flex items-center gap-2"
           style={{
@@ -326,7 +394,7 @@ export default function PreporukaPage() {
         >
           <Building2 size={13} />
           <RefreshCw size={12} className={competitorLoading ? "animate-spin" : ""} />
-          {competitorLoading ? "Proveravam..." : "Proveri konkurenciju"}
+          {competitorLoading ? "Proveravam..." : "Osveži konkurenciju"}
         </button>
       </div>
 
@@ -352,14 +420,28 @@ export default function PreporukaPage() {
               </div>
             </div>
           </div>
-          <div
-            className="rounded-lg"
-            style={{ padding: "8px 16px", background: "#ffffff", border: `1px solid ${style.border}` }}
-          >
-            <div style={{ fontSize: 10, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>Preporuka</div>
-            <div style={{ fontSize: 20, fontWeight: 800, color: style.color }}>
-              {recommendation.nudgePercent > 0 ? "+" : ""}{recommendation.nudgePercent}%
+          <div className="flex items-center gap-2">
+            <div
+              className="rounded-lg"
+              style={{ padding: "8px 16px", background: "#ffffff", border: `1px solid ${style.border}` }}
+            >
+              <div style={{ fontSize: 10, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em" }}>Preporuka</div>
+              <div style={{ fontSize: 20, fontWeight: 800, color: style.color }}>
+                {recommendation.nudgePercent > 0 ? "+" : ""}{recommendation.nudgePercent}%
+              </div>
             </div>
+            <span
+              className="rounded-full"
+              style={{
+                fontSize: 10, fontWeight: 700, padding: "4px 10px",
+                background: CONFIDENCE_STYLES[recommendation.confidenceLabel].bg,
+                color: CONFIDENCE_STYLES[recommendation.confidenceLabel].color,
+                border: `1px solid ${CONFIDENCE_STYLES[recommendation.confidenceLabel].border}`,
+              }}
+              title={`${Math.round(recommendation.confidence * 100)}% signala dostupno${recommendation.nudgePercentRaw !== recommendation.nudgePercent ? ` · pre korekcije: ${recommendation.nudgePercentRaw > 0 ? "+" : ""}${recommendation.nudgePercentRaw}%` : ""}`}
+            >
+              Pouzdanost: {recommendation.confidenceLabel}
+            </span>
           </div>
         </div>
 
@@ -393,15 +475,45 @@ export default function PreporukaPage() {
         )}
         {!competitorChecked ? (
           <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
-            Klikni &quot;Proveri konkurenciju&quot; da uključiš cene konkurencije u preporuku.
+            {competitorLoading ? "Proveravam cene konkurencije…" : "Čekam datum i hotel da proverim konkurenciju."}
           </div>
         ) : competitorAvgEur != null ? (
           <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
-            Prosek konkurencije: {fmtEur(competitorAvgEur)} (na osnovu {competitorCount} {competitorCount === 1 ? "hotela" : "hotela"})
+            Prosek konkurencije: {fmtEur(competitorAvgEur)} (na osnovu {competitorCount} {competitorCount === 1 ? "hotela" : "hotela"}
+            {competitorSnapshot?.source === "manual" ? ", ručno uneto" : ""})
           </div>
         ) : (
-          <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
-            Nema dostupnih cena konkurencije za ovaj datum.
+          <div className="flex flex-col gap-2" style={{ marginTop: 4 }}>
+            <div style={{ fontSize: 11, color: "#9ca3af" }}>
+              Nema dostupnih cena konkurencije za ovaj datum.
+            </div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <input
+                type="text"
+                value={manualCompetitorInput}
+                onChange={e => setManualCompetitorInput(e.target.value)}
+                onKeyDown={e => { if (e.key === "Enter") saveManualCompetitorPrices(); }}
+                placeholder="npr. 70, 65, 80 (EUR, odvojene zarezom)"
+                style={{
+                  height: 30, minWidth: 220, borderRadius: 6,
+                  border: "1px solid #e5e7eb", paddingLeft: 8, paddingRight: 8,
+                  fontSize: 11, color: "#111827", background: "#ffffff", outline: "none",
+                }}
+              />
+              <button
+                onClick={saveManualCompetitorPrices}
+                disabled={savingManualCompetitor || !manualCompetitorInput.trim()}
+                style={{
+                  height: 30, paddingLeft: 10, paddingRight: 10, borderRadius: 6, border: "none",
+                  background: !manualCompetitorInput.trim() ? "#f3f4f6" : "linear-gradient(135deg, #C9A84C 0%, #E8C96B 100%)",
+                  color: !manualCompetitorInput.trim() ? "#9ca3af" : "#ffffff",
+                  fontSize: 11, fontWeight: 600,
+                  cursor: savingManualCompetitor || !manualCompetitorInput.trim() ? "default" : "pointer",
+                }}
+              >
+                {savingManualCompetitor ? "…" : "Unesi ručno"}
+              </button>
+            </div>
           </div>
         )}
       </div>

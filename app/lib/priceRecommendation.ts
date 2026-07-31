@@ -19,10 +19,15 @@ export const RECOMMENDATION_CONFIG = {
   lowerThresholdPercent: -3, // nudge% <= this → LOWER
   roundToEur: 5,             // suggested prices round to the nearest 5€
   chipDeadband: 0.05,        // a component below this |value| doesn't get its own reason chip
+  // Confidence = (weight of signals actually present) / (weight of all signals). Below these
+  // thresholds the label shown to the user drops a tier — the nudge itself is damped continuously
+  // by the raw confidence value, not by these tiers (see applyConfidenceDamper).
+  confidenceTiers: { high: 0.75, medium: 0.4 },
 } as const;
 
 export type Verdict = "RAISE" | "HOLD" | "LOWER";
 export type ChipTone = "positive" | "negative" | "neutral";
+export type ConfidenceLabel = "visoka" | "srednja" | "niska";
 
 export interface RecommendationInputs {
   onBooksOccPct: number | null;          // current on-books occupancy %, e.g. 68
@@ -51,7 +56,10 @@ export interface ReasonChip {
 
 export interface RecommendationResult {
   demandScore: number;
-  nudgePercent: number;
+  nudgePercentRaw: number;     // before confidence damping — what a fully-confident read would be
+  nudgePercent: number;        // final, confidence-damped nudge — this is what drives the verdict/price
+  confidence: number;          // 0..1 — share of total signal weight that was actually available
+  confidenceLabel: ConfidenceLabel;
   verdict: Verdict;
   usedSignals: string[];    // human labels for components that had real data
   missingSignals: string[]; // human labels for components that had no data
@@ -102,6 +110,30 @@ export function computeDemandScore(components: RecommendationComponent[]): numbe
 export function computeNudgePercent(demandScore: number): number {
   const cfg = RECOMMENDATION_CONFIG;
   return clamp(Math.round(demandScore * cfg.nudgeCapPercent), -cfg.nudgeCapPercent, cfg.nudgeCapPercent);
+}
+
+// Re-normalizing the demand score onto whatever signals survive (see computeDemandScore) means a
+// single lightweight signal — a weekend flag alone, say — can read as if it were a fully-confident
+// verdict and swing the nudge to the ±15% cap. Confidence scales the nudge back down by how much of
+// the total signal weight was actually available, so a thin read shrinks toward HOLD instead of
+// making a big move off one input.
+export function computeConfidence(components: RecommendationComponent[]): number {
+  const totalWeight = components.reduce((sum, c) => sum + c.weight, 0);
+  if (totalWeight === 0) return 0;
+  const presentWeight = components.filter(c => c.value !== null).reduce((sum, c) => sum + c.weight, 0);
+  return presentWeight / totalWeight;
+}
+
+export function confidenceLabel(confidence: number): ConfidenceLabel {
+  const cfg = RECOMMENDATION_CONFIG.confidenceTiers;
+  if (confidence >= cfg.high) return "visoka";
+  if (confidence >= cfg.medium) return "srednja";
+  return "niska";
+}
+
+export function applyConfidenceDamper(nudgePercentRaw: number, confidence: number): number {
+  const cfg = RECOMMENDATION_CONFIG;
+  return clamp(Math.round(nudgePercentRaw * confidence), -cfg.nudgeCapPercent, cfg.nudgeCapPercent);
 }
 
 export function computeVerdict(nudgePercent: number): Verdict {
@@ -198,7 +230,9 @@ export function computeRecommendation(inputs: RecommendationInputs): Recommendat
   ];
 
   const demandScore = computeDemandScore(components);
-  const nudgePercent = computeNudgePercent(demandScore);
+  const nudgePercentRaw = computeNudgePercent(demandScore);
+  const confidence = computeConfidence(components);
+  const nudgePercent = applyConfidenceDamper(nudgePercentRaw, confidence);
   const verdict = computeVerdict(nudgePercent);
 
   const usedSignals = (Object.keys(SIGNAL_LABELS) as (keyof typeof SIGNAL_LABELS)[])
@@ -210,5 +244,8 @@ export function computeRecommendation(inputs: RecommendationInputs): Recommendat
 
   const reasons = buildReasonChips(inputs, { paceVsTarget, competitorGap, paceVsLastYear });
 
-  return { demandScore, nudgePercent, verdict, usedSignals, missingSignals, components, reasons };
+  return {
+    demandScore, nudgePercentRaw, nudgePercent, confidence, confidenceLabel: confidenceLabel(confidence),
+    verdict, usedSignals, missingSignals, components, reasons,
+  };
 }
