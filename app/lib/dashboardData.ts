@@ -1,4 +1,4 @@
-import { supabase, upsertDailyReportRow, type DailyReportRow, type MonthlyTargetRow, type OnBooksSnapshotRow } from "./supabaseClient";
+import { supabase, upsertDailyReportRow, upsertOnBooksSnapshotRows, type DailyReportRow, type MonthlyTargetRow, type OnBooksSnapshotRow } from "./supabaseClient";
 import {
   ROW_DEFS,
   ROW_TARGET_FIELD,
@@ -526,6 +526,13 @@ export interface OnBooksMonthInput {
   roomsOnbooks: number;
   revenueOnbooks: number;
   occupancyOnbooks: number;
+  // The actual final total for this same stay month LAST year (e.g. August 2025's whole-month
+  // result), captured only by the Excel import (see importOnBooksMonths) — the manual entry form
+  // never edits these, so they're left undefined there and the upsert leaves any existing value
+  // untouched. null means "the file had no last-year figure for this month" — never 0.
+  roomsLastYear?: number | null;
+  revenueLastYear?: number | null;
+  occupancyLastYear?: number | null;
 }
 
 export interface StayMonthDef {
@@ -580,23 +587,33 @@ export async function fetchOnBooksForDate(hotelId: string, dateISO: string): Pro
       roomsOnbooks: found?.rooms_onbooks ?? 0,
       revenueOnbooks: found?.revenue_onbooks ?? 0,
       occupancyOnbooks: found?.occupancy_onbooks ?? 0,
+      roomsLastYear: found?.rooms_last_year ?? null,
+      revenueLastYear: found?.revenue_last_year ?? null,
+      occupancyLastYear: found?.occupancy_last_year ?? null,
     };
   });
 }
 
 export async function saveOnBooksForDate(hotelId: string, dateISO: string, entries: OnBooksMonthInput[]): Promise<void> {
-  const payload = entries.map(e => ({
-    hotel_id: hotelId,
-    snapshot_date: dateISO,
-    stay_month: e.stayMonth,
-    stay_year: e.stayYear,
-    rooms_onbooks: e.roomsOnbooks,
-    revenue_onbooks: e.revenueOnbooks,
-    occupancy_onbooks: e.occupancyOnbooks,
-  }));
-  const { error } = await supabase
-    .from("onbooks_snapshots")
-    .upsert(payload, { onConflict: "hotel_id,snapshot_date,stay_month,stay_year" });
+  const payload = entries.map(e => {
+    const row: Record<string, unknown> = {
+      hotel_id: hotelId,
+      snapshot_date: dateISO,
+      stay_month: e.stayMonth,
+      stay_year: e.stayYear,
+      rooms_onbooks: e.roomsOnbooks,
+      revenue_onbooks: e.revenueOnbooks,
+      occupancy_onbooks: e.occupancyOnbooks,
+    };
+    // Only ever set by the import path — omitted (not just null) when the caller (e.g. the
+    // manual entry form) never touched them, so the upsert leaves an existing value in place
+    // instead of clobbering it with an unrelated save.
+    if (e.roomsLastYear !== undefined) row.rooms_last_year = e.roomsLastYear;
+    if (e.revenueLastYear !== undefined) row.revenue_last_year = e.revenueLastYear;
+    if (e.occupancyLastYear !== undefined) row.occupancy_last_year = e.occupancyLastYear;
+    return row;
+  });
+  const { error } = await upsertOnBooksSnapshotRows(payload);
   if (error) console.error("Failed to save on-books snapshot:", error.message);
 }
 
@@ -669,6 +686,14 @@ function normalizePercent(n: number | null): number {
   return v !== 0 && Math.abs(v) <= 1 ? v * 100 : v;
 }
 
+// Same fraction-vs-percent normalization as normalizePercent, but preserves null instead of
+// coercing a missing reading to 0 — for fields (like the last-year on-books occupancy) where the
+// storage column itself is nullable and a genuine "not captured" must stay distinguishable.
+function normalizePercentOrNull(n: number | null): number | null {
+  if (n === null) return null;
+  return n !== 0 && Math.abs(n) <= 1 ? n * 100 : n;
+}
+
 // Months after the current calendar month are still open — their figures are forward demand, not
 // a finished result, so they're saved as on-books snapshots rather than daily_reports actuals.
 // asOfDateISO defaults to today but should be the file's own "as of" date when known (see
@@ -685,6 +710,12 @@ export async function importOnBooksMonths(hotelId: string, months: ParsedMonthMe
     roomsOnbooks: numOrZero(m.roomNights.today),
     revenueOnbooks: numOrZero(m.revenue.today),
     occupancyOnbooks: normalizePercent(m.occupancy.today),
+    // The file's "Total Last Year" column for this same month — e.g. August's own row carries
+    // August 2025's actual whole-month total, not a pace figure. Passed through as null (never
+    // coerced to 0) when the file didn't have it, per parseDailyReportExcel's own convention.
+    roomsLastYear: m.roomNights.totalLastYear,
+    revenueLastYear: m.revenue.totalLastYear,
+    occupancyLastYear: normalizePercentOrNull(m.occupancy.totalLastYear),
   }));
   await saveOnBooksForDate(hotelId, asOfDateISO, entries);
   return futureMonths.length;

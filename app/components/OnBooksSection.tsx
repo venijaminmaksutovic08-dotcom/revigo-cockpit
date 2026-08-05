@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { BookMarked, TrendingUp, TrendingDown } from "lucide-react";
+import { MONTHS_SR } from "../context/HotelContext";
 import {
   formatDateSr,
   fetchOnBooksForDate,
@@ -30,7 +31,18 @@ function fmtPct(n: number): string { return `${(Math.round(n * 10) / 10).toLocal
 interface MonthCardData {
   def: StayMonthDef;
   current: Pick<OnBooksMonthInput, "roomsOnbooks" | "revenueOnbooks" | "occupancyOnbooks">;
+  // "vs isti datum lani" delta source — last year's on-books PACE as of the equivalent date
+  // (from a year-ago onbooks_snapshots row, if one was ever recorded).
   lastYear: Pick<OnBooksSnapshotRow, "rooms_onbooks" | "revenue_onbooks" | "occupancy_onbooks"> | null;
+  // The actual final whole-month total for the same stay month last year (e.g. August 2025's real
+  // result), captured straight from the file's "Total Last Year" column — a different figure from
+  // `lastYear` above (a pace snapshot), shown as real numbers rather than a delta. Undefined for
+  // the current-month card, which isn't in scope for this comparison.
+  lastYearActuals?: {
+    roomsLastYear: number | null;
+    revenueLastYear: number | null;
+    occupancyLastYear: number | null;
+  };
 }
 
 function DeltaLine({ label, current, lastYear, formatter }: { label: string; current: number; lastYear: number | null; formatter: (n: number) => string }) {
@@ -56,8 +68,21 @@ function DeltaLine({ label, current, lastYear, formatter }: { label: string; cur
   );
 }
 
+// A single "nema podatka"-safe row for the last-year actuals block — null renders as an honest
+// missing state, never a fake 0 (a real hotel practically never has a literal 0 on a whole month).
+function ActualLine({ label, value, formatter }: { label: string; value: number | null; formatter: (n: number) => string }) {
+  return (
+    <div className="flex items-center justify-between">
+      <span style={{ fontSize: 12, color: "#6b7280" }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 700, color: value === null ? "#d1d5db" : "#111827" }}>
+        {value === null ? "nema podatka" : formatter(value)}
+      </span>
+    </div>
+  );
+}
+
 function MonthCard({ data, asOfDate, subtitle }: { data: MonthCardData; asOfDate: string; subtitle?: string }) {
-  const { def, current, lastYear } = data;
+  const { def, current, lastYear, lastYearActuals } = data;
   return (
     <div
       className="rounded-xl flex-1"
@@ -91,6 +116,17 @@ function MonthCard({ data, asOfDate, subtitle }: { data: MonthCardData; asOfDate
         <DeltaLine label="Prihod" current={current.revenueOnbooks} lastYear={lastYear?.revenue_onbooks ?? null} formatter={fmtRSD} />
         <DeltaLine label="Popunjenost" current={current.occupancyOnbooks} lastYear={lastYear?.occupancy_onbooks ?? null} formatter={fmtPct} />
       </div>
+
+      {lastYearActuals && (
+        <div className="flex flex-col gap-1.5" style={{ paddingTop: 10, marginTop: 10, borderTop: "1px solid #f3f4f6" }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 2 }}>
+            Prošle godine — {MONTHS_SR[def.month - 1]} {def.year - 1}
+          </div>
+          <ActualLine label="Noćenja" value={lastYearActuals.roomsLastYear} formatter={fmtInt} />
+          <ActualLine label="Prihod" value={lastYearActuals.revenueLastYear} formatter={fmtRSD} />
+          <ActualLine label="Popunjenost" value={lastYearActuals.occupancyLastYear} formatter={fmtPct} />
+        </div>
+      )}
     </div>
   );
 }
@@ -121,7 +157,16 @@ export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBook
         stayMonths.map(def => fetchOnBooksLastYear(hotelId, asOfDate, def.month, def.year))
       );
       if (cancelled) return;
-      setMonths(stayMonths.map((def, i) => ({ def, current: current[i], lastYear: lastYearRows[i] })));
+      setMonths(stayMonths.map((def, i) => ({
+        def,
+        current: current[i],
+        lastYear: lastYearRows[i],
+        lastYearActuals: {
+          roomsLastYear: current[i].roomsLastYear ?? null,
+          revenueLastYear: current[i].revenueLastYear ?? null,
+          occupancyLastYear: current[i].occupancyLastYear ?? null,
+        },
+      })));
       setCurrentSnapshot(currentMonthSnap);
       setLoading(false);
     })();

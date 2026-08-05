@@ -55,8 +55,31 @@ export interface OnBooksSnapshotRow {
   rooms_onbooks: number;
   revenue_onbooks: number;
   occupancy_onbooks: number;
+  // Optional: the last-year columns migration may not be applied yet in every environment — see
+  // upsertOnBooksSnapshotRows below, which degrades gracefully when they're missing.
+  rooms_last_year?: number | null;
+  revenue_last_year?: number | null;
+  occupancy_last_year?: number | null;
   notes: string | null;
   created_at: string;
+}
+
+const LAST_YEAR_ONBOOKS_KEYS = ["rooms_last_year", "revenue_last_year", "occupancy_last_year"] as const;
+
+// Upserts onbooks_snapshots rows, tolerating an unapplied last-year-columns migration: if those
+// columns don't exist yet, retries once with them stripped from every row rather than failing the
+// whole on-books save (this year's rooms/revenue/occupancy) over three extra fields.
+export async function upsertOnBooksSnapshotRows(payload: Record<string, unknown>[]) {
+  const first = await supabase.from("onbooks_snapshots").upsert(payload, { onConflict: "hotel_id,snapshot_date,stay_month,stay_year" });
+  const hasLastYearFields = payload.some(row => LAST_YEAR_ONBOOKS_KEYS.some(k => k in row));
+  if (!first.error || !isMissingColumnError(first.error) || !hasLastYearFields) return first;
+  console.error("onbooks_snapshots last-year columns unavailable (run the latest migration?) — retrying without them:", first.error.message);
+  const stripped = payload.map(row => {
+    const copy = { ...row };
+    for (const k of LAST_YEAR_ONBOOKS_KEYS) delete copy[k];
+    return copy;
+  });
+  return supabase.from("onbooks_snapshots").upsert(stripped, { onConflict: "hotel_id,snapshot_date,stay_month,stay_year" });
 }
 
 export interface MonthlyTargetRow {
