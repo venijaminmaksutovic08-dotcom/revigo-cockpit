@@ -4,6 +4,7 @@ import { useRef, useState } from "react";
 import { X, FileSpreadsheet, Upload, AlertCircle, CheckCircle2, CalendarClock, CalendarRange, Layers } from "lucide-react";
 import { parseDailyReportExcel, parseDateFromFilename, type ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { importOnBooksMonths, importActualsMonths, todayISO, formatDateSr } from "../lib/dashboardData";
+import { archiveReportImport } from "../lib/reportArchive";
 
 interface ExcelImportModalProps {
   hotelId: string;
@@ -59,6 +60,7 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
     }
 
     const parsedDate = parseDateFromFilename(file.name);
+    const resolvedAsOfDate = parsedDate.dateISO ?? todayISO();
     if (parsedDate.dateISO) {
       setAsOfDate(parsedDate.dateISO);
       setDateWarning(null);
@@ -69,6 +71,9 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
 
     setMonths(result.months);
     setStep("selectMode");
+
+    // Best-effort — never blocks the actual import above, see reportArchive.ts.
+    archiveReportImport(hotelId, resolvedAsOfDate, file, result.months);
   }
 
   async function handleSelectMode(mode: ImportMode) {

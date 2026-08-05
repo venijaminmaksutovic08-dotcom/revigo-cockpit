@@ -18,6 +18,7 @@ import ImportReportModal from "../components/ImportReportModal";
 import type { ParsedReportRow } from "../lib/reportImport";
 import type { ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, importOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
+import { archiveReportImport } from "../lib/reportArchive";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -521,11 +522,13 @@ export default function MesecniPage() {
         <ImportReportModal
           hotel={selectedHotelName}
           fixedDate={{ dateISO: openDate, dateLabel }}
-          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[]) => {
+          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[], file: File | null) => {
             if (rows.length > 0) {
               await saveEntryForDate(openDate, rows[0].data);
               if (selectedHotel) await saveMonthlyTargetIfAbsent(selectedHotel, openDate, rows[0].data);
               if (selectedHotel && allMonths.length > 0) await importOnBooksMonths(selectedHotel, allMonths, openDate);
+              // Best-effort archive of the raw file + full parse — never blocks the import above.
+              if (selectedHotel && file && allMonths.length > 0) await archiveReportImport(selectedHotel, openDate, file, allMonths);
             }
             closeAll();
           }}

@@ -15,6 +15,7 @@ import {
 import type { ParsedReportRow } from "../lib/reportImport";
 import type { ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, importOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
+import { archiveReportImport } from "../lib/reportArchive";
 
 const WEEKDAYS_SR = ["Pon", "Uto", "Sre", "Čet", "Pet", "Sub", "Ned"];
 
@@ -269,13 +270,15 @@ export default function DataEntryCalendar() {
         <ImportReportModal
           hotel={selectedHotelName}
           fixedDate={{ dateISO: openDate, dateLabel }}
-          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[]) => {
+          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[], file: File | null) => {
             if (rows.length > 0) {
               await saveEntryForDate(openDate, rows[0].data);
               if (selectedHotel) await saveMonthlyTargetIfAbsent(selectedHotel, openDate, rows[0].data);
               // Same file also has the forward-looking months (e.g. Aug/Sep) — save those as
               // on-books too, keyed to this same report date, so one daily upload covers both.
               if (selectedHotel && allMonths.length > 0) await importOnBooksMonths(selectedHotel, allMonths, openDate);
+              // Best-effort archive of the raw file + full parse — never blocks the import above.
+              if (selectedHotel && file && allMonths.length > 0) await archiveReportImport(selectedHotel, openDate, file, allMonths);
             }
             closeAll();
           }}

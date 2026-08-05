@@ -22,7 +22,9 @@ interface ImportReportModalProps {
   // allMonths carries every month the wide "Daily report" sheet contained (empty for the generic
   // per-date parser, which has no concept of months) — so the caller can also import the
   // forward-looking on-books months (see importOnBooksMonths) from the same parse, no re-upload.
-  onConfirm: (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[]) => Promise<void>;
+  // file is the originally-selected File, passed through so the caller can archive it (see
+  // reportArchive.ts) — the caller has the hotelId this component never receives.
+  onConfirm: (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[], file: File | null) => Promise<void>;
   onClose: () => void;
 }
 
@@ -50,11 +52,14 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
   // Every month the wide sheet contained, from the same parse `rows` was built from — passed
   // through to onConfirm so the caller can also import the forward-looking on-books months.
   const [allMonths, setAllMonths]             = useState<ParsedMonthMetrics[]>([]);
+  // The originally-selected File, passed through to onConfirm for archiving (see reportArchive.ts).
+  const [selectedFile, setSelectedFile]       = useState<File | null>(null);
 
   const isSingleDate = Boolean(fixedDate);
 
   async function processFile(file: File) {
     setFileName(file.name);
+    setSelectedFile(file);
     setParsing(true);
     setError(null);
     setWideMonthLabel(null);
@@ -143,7 +148,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
 
   async function handleConfirm() {
     setSaving(true);
-    await onConfirm(rows, allMonths);
+    await onConfirm(rows, allMonths, selectedFile);
     setSaving(false);
   }
 
@@ -155,6 +160,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setWideMonthLabel(null);
     setMissingFields([]);
     setAllMonths([]);
+    setSelectedFile(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
