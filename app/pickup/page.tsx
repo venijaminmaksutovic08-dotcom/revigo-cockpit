@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { BarChart3, TrendingUp, TrendingDown, Minus, CalendarDays } from "lucide-react";
 import { useHotel, ROW_DEFS, PICKUP_ROW_KEYS, formatNumber, type RowKey, type RowDef } from "../context/HotelContext";
 import {
-  fetchLatestReportDate, fetchDayReport, fetchPickupPeriodTotals,
+  fetchLatestReportDate, fetchDayReport, fetchPickupTotalsForPeriod,
   todayISO, dateParts, toISO, formatDateSr,
   type PickupPeriodTotals,
 } from "../lib/dashboardData";
@@ -97,8 +97,8 @@ export default function PickupPage() {
     setLoadingPeriods(true);
     try {
       const [a, b] = await Promise.all([
-        fetchPickupPeriodTotals(selectedHotel, startA, endA),
-        fetchPickupPeriodTotals(selectedHotel, startB, endB),
+        fetchPickupTotalsForPeriod(selectedHotel, startA, endA),
+        fetchPickupTotalsForPeriod(selectedHotel, startB, endB),
       ]);
       setTotalsA(a);
       setTotalsB(b);

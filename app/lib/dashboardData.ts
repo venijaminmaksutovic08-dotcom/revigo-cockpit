@@ -3,6 +3,7 @@ import {
   ROW_DEFS,
   ROW_TARGET_FIELD,
   MONTHS_SR,
+  PICKUP_ROW_KEYS,
   dbRowToEntryData,
   formatNumber,
   statusFor,
@@ -411,6 +412,69 @@ export async function fetchPickupPeriodTotals(hotelId: string, startISO: string,
   }
 
   return { totals, daysWithData, daysInRange: rows.length };
+}
+
+// Computes "pickup" for a PAST-YEAR date range (e.g. Aug 1-5, 2025) from the same_day_last_year
+// trail embedded on THIS YEAR's rows — daily_reports has no rows dated in a past year at all (the
+// app didn't exist yet), so the only record of that year's day-by-day on-books movement is this
+// field carried on the equivalent this-year dates. Shifts the requested range forward exactly one
+// year, reads same_day_last_year off those rows, and sums CONSECUTIVE-CALENDAR-DAY, SAME-CALENDAR-
+// MONTH deltas only: same_day_last_year resets at every month boundary (it tracks whichever month
+// is "current" as of report_date), so a delta spanning two different months would be a meaningless
+// jump between two unrelated curves, not a real pickup — same "never cross a snapshot boundary"
+// hazard as every other cumulative-on-books field in this app.
+export async function fetchPickupPeriodTotalsFromLastYearTrail(hotelId: string, startISO: string, endISO: string): Promise<PickupPeriodTotals> {
+  const shiftedStart = shiftYears(startISO, 1);
+  const shiftedEnd = shiftYears(endISO, 1);
+
+  const { data, error } = await supabase
+    .from("daily_reports")
+    .select("report_date, same_day_last_year")
+    .eq("hotel_id", hotelId)
+    .gte("report_date", shiftedStart)
+    .lte("report_date", shiftedEnd)
+    .order("report_date", { ascending: true });
+
+  if (error) console.error("Failed to load last-year pickup trail:", error.message);
+  const rows = (data ?? []) as { report_date: string; same_day_last_year?: Record<string, number> }[];
+
+  const totals = {} as Record<RowKey, number>;
+  const daysWithData = {} as Record<RowKey, number>;
+  for (const rowDef of ROW_DEFS) { totals[rowDef.key] = 0; daysWithData[rowDef.key] = 0; }
+
+  for (let i = 1; i < rows.length; i++) {
+    const prev = rows[i - 1];
+    const cur = rows[i];
+    // Only a genuine one-calendar-day step within the same month is a real pickup — a gap (a
+    // report wasn't filed every day) or a month boundary isn't.
+    if (shiftDays(prev.report_date, 1) !== cur.report_date) continue;
+    if (yearMonthOf(prev.report_date) !== yearMonthOf(cur.report_date)) continue;
+
+    const prevLY = prev.same_day_last_year ?? {};
+    const curLY = cur.same_day_last_year ?? {};
+    for (const key of PICKUP_ROW_KEYS) {
+      const a = Number(prevLY[key] ?? 0);
+      const b = Number(curLY[key] ?? 0);
+      if (a === 0 || b === 0) continue; // missing on either side, per the 0-means-missing convention
+      totals[key] += b - a;
+      daysWithData[key]++;
+    }
+  }
+
+  return { totals, daysWithData, daysInRange: rows.length };
+}
+
+// Picks the right pickup source for a period: the real per-day pickup for a range that includes
+// the current year, or the reconstructed-from-trail figures for a range fully inside a past year
+// (see fetchPickupPeriodTotalsFromLastYearTrail). A range spanning past and current years, or two
+// different past years, falls back to the direct query — an edge case not worth reconstructing.
+export async function fetchPickupTotalsForPeriod(hotelId: string, startISO: string, endISO: string): Promise<PickupPeriodTotals> {
+  const startYear = dateParts(startISO).year;
+  const endYear = dateParts(endISO).year;
+  const isPastYearRange = startYear === endYear && startYear < dateParts(todayISO()).year;
+  return isPastYearRange
+    ? fetchPickupPeriodTotalsFromLastYearTrail(hotelId, startISO, endISO)
+    : fetchPickupPeriodTotals(hotelId, startISO, endISO);
 }
 
 export interface ReportSnapshot {
