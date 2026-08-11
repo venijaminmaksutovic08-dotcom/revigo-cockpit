@@ -7,6 +7,7 @@ import {
   formatDateSr,
   fetchOnBooksForDate,
   fetchOnBooksLastYear,
+  fetchOnBooksLastYearActuals,
   fetchLatestMonthSnapshot,
   getOnBooksStayMonths,
   getCurrentMonthDef,
@@ -153,18 +154,22 @@ export default function OnBooksSection({ hotelId, asOfDate, refreshKey }: OnBook
         // row — that row may not exist even when this year's row does.
         fetchLatestMonthSnapshot(hotelId, monthStart, asOfDate),
       ]);
-      const lastYearRows = await Promise.all(
-        stayMonths.map(def => fetchOnBooksLastYear(hotelId, asOfDate, def.month, def.year))
-      );
+      const [lastYearRows, lastYearActualsFallback] = await Promise.all([
+        Promise.all(stayMonths.map(def => fetchOnBooksLastYear(hotelId, asOfDate, def.month, def.year))),
+        // The current snapshot's own last-year cells may be null (that day's file lacked them) even
+        // though an earlier snapshot already captured the (fixed, never-changing) annual figure —
+        // fall back to that rather than showing "nema podatka" for data we actually have.
+        Promise.all(stayMonths.map(def => fetchOnBooksLastYearActuals(hotelId, def.month, def.year))),
+      ]);
       if (cancelled) return;
       setMonths(stayMonths.map((def, i) => ({
         def,
         current: current[i],
         lastYear: lastYearRows[i],
         lastYearActuals: {
-          roomsLastYear: current[i].roomsLastYear ?? null,
-          revenueLastYear: current[i].revenueLastYear ?? null,
-          occupancyLastYear: current[i].occupancyLastYear ?? null,
+          roomsLastYear: current[i].roomsLastYear ?? lastYearActualsFallback[i].roomsLastYear,
+          revenueLastYear: current[i].revenueLastYear ?? lastYearActualsFallback[i].revenueLastYear,
+          occupancyLastYear: current[i].occupancyLastYear ?? lastYearActualsFallback[i].occupancyLastYear,
         },
       })));
       setCurrentSnapshot(currentMonthSnap);

@@ -658,6 +658,37 @@ export async function fetchOnBooksForDate(hotelId: string, dateISO: string): Pro
   });
 }
 
+export interface OnBooksLastYearActuals {
+  roomsLastYear: number | null;
+  revenueLastYear: number | null;
+  occupancyLastYear: number | null;
+}
+
+// "Total Last Year" is a fixed annual figure for a given stay month — once any snapshot has
+// captured it, it can never change, so a later snapshot's file lacking that column (parser miss,
+// file-format drift) shouldn't blank out a value that's already known. Falls back to the most
+// recent snapshot that ever recorded it for this hotel + stay month, independent of which "as of"
+// date is currently on screen. rooms_last_year is used as the representative field to filter on
+// since all three last-year fields are always captured together from the same source cell group.
+export async function fetchOnBooksLastYearActuals(hotelId: string, stayMonth: number, stayYear: number): Promise<OnBooksLastYearActuals> {
+  const { data, error } = await supabase
+    .from("onbooks_snapshots")
+    .select("rooms_last_year, revenue_last_year, occupancy_last_year")
+    .eq("hotel_id", hotelId)
+    .eq("stay_month", stayMonth)
+    .eq("stay_year", stayYear)
+    .not("rooms_last_year", "is", null)
+    .order("snapshot_date", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (error) console.error("Failed to load on-books last-year actuals fallback:", error.message);
+  return {
+    roomsLastYear: data?.rooms_last_year ?? null,
+    revenueLastYear: data?.revenue_last_year ?? null,
+    occupancyLastYear: data?.occupancy_last_year ?? null,
+  };
+}
+
 export async function saveOnBooksForDate(hotelId: string, dateISO: string, entries: OnBooksMonthInput[]): Promise<void> {
   const payload = entries.map(e => {
     const row: Record<string, unknown> = {
