@@ -15,10 +15,11 @@ import type { KPIStatus } from "../data/hotelData";
 import DateActionModal from "../components/DateActionModal";
 import DataEntryModal from "../components/DataEntryModal";
 import ImportReportModal from "../components/ImportReportModal";
+import ArchiveWarningToast from "../components/ArchiveWarningToast";
 import type { ParsedReportRow } from "../lib/reportImport";
 import type { ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, importOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
-import { archiveReportImport } from "../lib/reportArchive";
+import { archiveReportImport, describeArchiveMiss } from "../lib/reportArchive";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -171,6 +172,7 @@ export default function MesecniPage() {
   const [openDay, setOpenDay] = useState<number | null>(null);
   const [mode, setMode] = useState<ModalMode>(null);
   const [onBooksData, setOnBooksData] = useState<OnBooksMonthInput[] | null>(null);
+  const [archiveWarning, setArchiveWarning] = useState<string | null>(null);
 
   const openDate = openDay !== null && monthInfo ? dateToISO(monthInfo.year, monthInfo.month, openDay) : null;
 
@@ -522,18 +524,31 @@ export default function MesecniPage() {
         <ImportReportModal
           hotel={selectedHotelName}
           fixedDate={{ dateISO: openDate, dateLabel }}
-          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[], file: File | null) => {
+          onFileSelected={(file, allMonths, parseError) => {
+            // Guaranteed archive of the raw file + outcome, fired the moment a file is selected —
+            // whether it goes on to parse successfully or not, so a broken file still leaves the
+            // file + the error behind for diagnosis. A miss is surfaced, never silent.
+            if (!selectedHotel) return;
+            archiveReportImport(selectedHotel, openDate, file, allMonths, parseError).then(outcome => {
+              const warning = describeArchiveMiss(outcome);
+              if (warning) { console.error("Report archive incomplete:", warning); setArchiveWarning(warning); }
+            });
+          }}
+          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[]) => {
             if (rows.length > 0) {
               await saveEntryForDate(openDate, rows[0].data);
               if (selectedHotel) await saveMonthlyTargetIfAbsent(selectedHotel, openDate, rows[0].data);
               if (selectedHotel && allMonths.length > 0) await importOnBooksMonths(selectedHotel, allMonths, openDate);
-              // Best-effort archive of the raw file + full parse — never blocks the import above.
-              if (selectedHotel && file && allMonths.length > 0) await archiveReportImport(selectedHotel, openDate, file, allMonths);
+              // Archiving already happened at file-selection time (see onFileSelected above).
             }
             closeAll();
           }}
           onClose={closeAll}
         />
+      )}
+
+      {archiveWarning && (
+        <ArchiveWarningToast message={archiveWarning} onDismiss={() => setArchiveWarning(null)} />
       )}
     </>
   );

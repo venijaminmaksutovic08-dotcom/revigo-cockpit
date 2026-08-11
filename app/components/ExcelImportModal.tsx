@@ -4,7 +4,8 @@ import { useRef, useState } from "react";
 import { X, FileSpreadsheet, Upload, AlertCircle, CheckCircle2, CalendarClock, CalendarRange, Layers } from "lucide-react";
 import { parseDailyReportExcel, parseDateFromFilename, type ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { importOnBooksMonths, importActualsMonths, todayISO, formatDateSr } from "../lib/dashboardData";
-import { archiveReportImport } from "../lib/reportArchive";
+import { archiveReportImport, describeArchiveMiss } from "../lib/reportArchive";
+import ArchiveWarningToast from "./ArchiveWarningToast";
 
 interface ExcelImportModalProps {
   hotelId: string;
@@ -26,41 +27,59 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep] = useState<Step>("upload");
   const [fileName, setFileName] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [months, setMonths] = useState<ParsedMonthMetrics[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [parsing, setParsing] = useState(false);
   const [importingMode, setImportingMode] = useState<ImportMode | null>(null);
   const [resultCount, setResultCount] = useState(0);
+  const [archiveWarning, setArchiveWarning] = useState<string | null>(null);
   // The sheet has no date cell of its own — its "as of" date comes from the filename (e.g.
   // "Queen_Daily_report_26_07.xlsx"). Falls back to today, with a visible warning, when that
   // can't be read, so an import is never silently mis-dated to whenever someone happened to click.
   const [asOfDate, setAsOfDate] = useState(todayISO());
   const [dateWarning, setDateWarning] = useState<string | null>(null);
 
+  // Guaranteed archive of the raw file + outcome, fired the moment a file is selected — whether it
+  // goes on to parse successfully or not, so a broken file still leaves the file + the error behind
+  // for diagnosis instead of vanishing without a trace. A miss is surfaced, never silent.
+  async function archiveAttempt(dateISO: string, file: File, months: ParsedMonthMetrics[], parseError: string | null) {
+    const outcome = await archiveReportImport(hotelId, dateISO, file, months, parseError);
+    const warning = describeArchiveMiss(outcome);
+    if (warning) { console.error("Report archive incomplete:", warning); setArchiveWarning(warning); }
+  }
+
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
     if (!file) return;
     setFileName(file.name);
+    setSelectedFile(file);
     setParsing(true);
     setError(null);
+
+    // Filename parsing doesn't depend on the file's content, so it's available even when the sheet
+    // itself fails to parse — used to key the archive attempt either way.
+    const parsedDate = parseDateFromFilename(file.name);
+    const attemptDateISO = parsedDate.dateISO ?? todayISO();
 
     let result;
     try {
       result = await parseDailyReportExcel(file);
     } catch {
       setParsing(false);
-      setError("Došlo je do greške prilikom čitanja fajla. Pokušajte ponovo.");
+      const message = "Došlo je do greške prilikom čitanja fajla. Pokušajte ponovo.";
+      setError(message);
+      archiveAttempt(attemptDateISO, file, [], message);
       return;
     }
     setParsing(false);
 
     if (result.error) {
       setError(result.error);
+      archiveAttempt(attemptDateISO, file, [], result.error);
       return;
     }
 
-    const parsedDate = parseDateFromFilename(file.name);
-    const resolvedAsOfDate = parsedDate.dateISO ?? todayISO();
     if (parsedDate.dateISO) {
       setAsOfDate(parsedDate.dateISO);
       setDateWarning(null);
@@ -71,9 +90,7 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
 
     setMonths(result.months);
     setStep("selectMode");
-
-    // Best-effort — never blocks the actual import above, see reportArchive.ts.
-    archiveReportImport(hotelId, resolvedAsOfDate, file, result.months);
+    archiveAttempt(attemptDateISO, file, result.months, null);
   }
 
   async function handleSelectMode(mode: ImportMode) {
@@ -93,6 +110,8 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
         ]);
         count = onBooksCount + actualsCount;
       }
+
+      // Archiving already happened at file-selection time (see archiveAttempt/handleFileChange).
       setResultCount(count);
       setStep("done");
       onImported();
@@ -107,8 +126,10 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
     setMonths([]);
     setError(null);
     setFileName("");
+    setSelectedFile(null);
     setAsOfDate(todayISO());
     setDateWarning(null);
+    setArchiveWarning(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -318,6 +339,10 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
           )}
         </div>
       </div>
+
+      {archiveWarning && (
+        <ArchiveWarningToast message={archiveWarning} onDismiss={() => setArchiveWarning(null)} />
+      )}
     </div>
   );
 }

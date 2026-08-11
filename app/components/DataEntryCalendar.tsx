@@ -5,6 +5,7 @@ import { CalendarDays } from "lucide-react";
 import DataEntryModal from "./DataEntryModal";
 import DateActionModal from "./DateActionModal";
 import ImportReportModal from "./ImportReportModal";
+import ArchiveWarningToast from "./ArchiveWarningToast";
 import {
   useHotel,
   emptyEntryData,
@@ -15,7 +16,7 @@ import {
 import type { ParsedReportRow } from "../lib/reportImport";
 import type { ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, importOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
-import { archiveReportImport } from "../lib/reportArchive";
+import { archiveReportImport, describeArchiveMiss } from "../lib/reportArchive";
 
 const WEEKDAYS_SR = ["Pon", "Uto", "Sre", "Čet", "Pet", "Sub", "Ned"];
 
@@ -56,6 +57,7 @@ export default function DataEntryCalendar() {
   const [openDay, setOpenDay] = useState<number | null>(null);
   const [mode, setMode]       = useState<ModalMode>(null);
   const [onBooksData, setOnBooksData] = useState<OnBooksMonthInput[] | null>(null);
+  const [archiveWarning, setArchiveWarning] = useState<string | null>(null);
 
   const openDate = openDay !== null && monthInfo ? dateToISO(monthInfo.year, monthInfo.month, openDay) : null;
 
@@ -270,20 +272,33 @@ export default function DataEntryCalendar() {
         <ImportReportModal
           hotel={selectedHotelName}
           fixedDate={{ dateISO: openDate, dateLabel }}
-          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[], file: File | null) => {
+          onFileSelected={(file, allMonths, parseError) => {
+            // Guaranteed archive of the raw file + outcome, fired the moment a file is selected —
+            // whether it goes on to parse successfully or not, so a broken file still leaves the
+            // file + the error behind for diagnosis. A miss is surfaced, never silent.
+            if (!selectedHotel) return;
+            archiveReportImport(selectedHotel, openDate, file, allMonths, parseError).then(outcome => {
+              const warning = describeArchiveMiss(outcome);
+              if (warning) { console.error("Report archive incomplete:", warning); setArchiveWarning(warning); }
+            });
+          }}
+          onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[]) => {
             if (rows.length > 0) {
               await saveEntryForDate(openDate, rows[0].data);
               if (selectedHotel) await saveMonthlyTargetIfAbsent(selectedHotel, openDate, rows[0].data);
               // Same file also has the forward-looking months (e.g. Aug/Sep) — save those as
               // on-books too, keyed to this same report date, so one daily upload covers both.
               if (selectedHotel && allMonths.length > 0) await importOnBooksMonths(selectedHotel, allMonths, openDate);
-              // Best-effort archive of the raw file + full parse — never blocks the import above.
-              if (selectedHotel && file && allMonths.length > 0) await archiveReportImport(selectedHotel, openDate, file, allMonths);
+              // Archiving already happened at file-selection time (see onFileSelected above).
             }
             closeAll();
           }}
           onClose={closeAll}
         />
+      )}
+
+      {archiveWarning && (
+        <ArchiveWarningToast message={archiveWarning} onDismiss={() => setArchiveWarning(null)} />
       )}
     </div>
   );

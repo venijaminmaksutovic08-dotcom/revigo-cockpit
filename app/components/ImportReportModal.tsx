@@ -25,12 +25,17 @@ interface ImportReportModalProps {
   // file is the originally-selected File, passed through so the caller can archive it (see
   // reportArchive.ts) — the caller has the hotelId this component never receives.
   onConfirm: (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[], file: File | null) => Promise<void>;
+  // Fires once per file selection, whether it went on to parse successfully or not — the caller
+  // archives the raw file + outcome immediately (see reportArchive.ts), so a failed parse still
+  // leaves the file and the error behind even if the user never reaches (or cancels out of)
+  // onConfirm. allMonths is [] and parseError is set when parsing failed.
+  onFileSelected?: (file: File, allMonths: ParsedMonthMetrics[], parseError: string | null) => void;
   onClose: () => void;
 }
 
 type Step = "select" | "preview";
 
-export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose }: ImportReportModalProps) {
+export default function ImportReportModal({ hotel, fixedDate, onConfirm, onFileSelected, onClose }: ImportReportModalProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [step, setStep]                       = useState<Step>("select");
   const [fileName, setFileName]               = useState("");
@@ -86,8 +91,11 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
         setAllMonths(wide.allMonths);
         setWideMonthLabel(`${MONTHS_SR[monthNumber - 1]} ${fixedDate.dateISO.slice(0, 4)}`);
         setStep("preview");
+        onFileSelected?.(file, wide.allMonths, null);
       } else {
-        setError(wide.error ?? "Nije moguće pročitati fajl. Proverite da li je u ispravnom Excel formatu.");
+        const message = wide.error ?? "Nije moguće pročitati fajl. Proverite da li je u ispravnom Excel formatu.";
+        setError(message);
+        onFileSelected?.(file, [], message);
       }
       return;
     }
@@ -97,6 +105,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
 
     if (result.error && result.rows.length === 0) {
       setError(result.error);
+      onFileSelected?.(file, [], result.error);
       return;
     }
 
@@ -120,6 +129,7 @@ export default function ImportReportModal({ hotel, fixedDate, onConfirm, onClose
     setDefaultedHeaders(result.defaultedColumnHeaders);
     setUnmatchedHeaders(result.unmatchedHeaders);
     setStep("preview");
+    onFileSelected?.(file, [], null); // the generic per-date parser has no month-block concept
   }
 
   function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {

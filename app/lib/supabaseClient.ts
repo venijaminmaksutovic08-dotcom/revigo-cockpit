@@ -29,7 +29,7 @@ export interface DailyReportRow {
   created_at: string;
 }
 
-function isMissingColumnError(error: { message: string } | null): boolean {
+export function isMissingColumnError(error: { message: string } | null): boolean {
   if (!error) return false;
   const msg = error.message.toLowerCase();
   return msg.includes("column") && (msg.includes("schema cache") || msg.includes("does not exist"));
