@@ -464,17 +464,93 @@ export async function fetchPickupPeriodTotalsFromLastYearTrail(hotelId: string, 
   return { totals, daysWithData, daysInRange: rows.length };
 }
 
+// A stay month that hasn't happened as actuals yet this year has no daily_reports rows at all —
+// the only record of its 2025 day-by-day movement is the "Same Day Last Year" figure captured on
+// onbooks_snapshots while it was still a forward month (see importOnBooksMonths). ProSoft maps
+// TODAY's day-of-month onto the target month (e.g. imported on Aug 5, September's own row carries
+// "September 5, 2025"'s cumulative total) — so the IMPORT date's day-of-month, not its calendar
+// month, is what identifies which day of last year's target month a reading belongs to.
+// dayStart/dayEnd are day-of-month bounds (1-31), taken straight from the requested period.
+export async function fetchOnBooksPickupFromSameDayLastYearTrail(
+  hotelId: string,
+  stayMonth: number,
+  stayYearThisYear: number,
+  dayStart: number,
+  dayEnd: number,
+): Promise<PickupPeriodTotals> {
+  const { data, error } = await supabase
+    .from("onbooks_snapshots")
+    .select("snapshot_date, rooms_same_day_last_year, revenue_same_day_last_year")
+    .eq("hotel_id", hotelId)
+    .eq("stay_month", stayMonth)
+    .eq("stay_year", stayYearThisYear)
+    .order("snapshot_date", { ascending: true });
+
+  if (error) console.error("Failed to load forward on-books same-day-last-year trail:", error.message);
+  const rows = (data ?? []) as { snapshot_date: string; rooms_same_day_last_year?: number | null; revenue_same_day_last_year?: number | null }[];
+
+  // Keep only rows whose import date falls in the requested day-of-month range, and dedupe by
+  // day-of-month (the same day-of-month can recur across different calendar months while a stay
+  // month is first 2 months out and then 1 month out — keep the most recent reading, i.e. later in
+  // `rows`, which is already ordered by snapshot_date ascending).
+  const byDay = new Map<number, { rooms: number | null; revenue: number | null }>();
+  for (const row of rows) {
+    const day = dateParts(row.snapshot_date).day;
+    if (day < dayStart || day > dayEnd) continue;
+    byDay.set(day, { rooms: row.rooms_same_day_last_year ?? null, revenue: row.revenue_same_day_last_year ?? null });
+  }
+  const byDayRows = Array.from(byDay.entries()).map(([day, v]) => ({ day, ...v })).sort((a, b) => a.day - b.day);
+
+  const totals = {} as Record<RowKey, number>;
+  const daysWithData = {} as Record<RowKey, number>;
+  for (const rowDef of ROW_DEFS) { totals[rowDef.key] = 0; daysWithData[rowDef.key] = 0; }
+
+  const valueFor = (r: { rooms: number | null; revenue: number | null }, key: RowKey): number | null =>
+    key === "brojNocenja" ? r.rooms : key === "ukupanPrihod" ? r.revenue : null;
+
+  for (let i = 1; i < byDayRows.length; i++) {
+    const prev = byDayRows[i - 1];
+    const cur = byDayRows[i];
+    if (cur.day !== prev.day + 1) continue; // only a genuine consecutive day is a real pickup
+
+    for (const key of PICKUP_ROW_KEYS) {
+      const a = valueFor(prev, key);
+      const b = valueFor(cur, key);
+      if (a === null || b === null || a === 0 || b === 0) continue; // missing on either side
+      totals[key] += b - a;
+      daysWithData[key]++;
+    }
+  }
+
+  return { totals, daysWithData, daysInRange: byDayRows.length };
+}
+
 // Picks the right pickup source for a period: the real per-day pickup for a range that includes
-// the current year, or the reconstructed-from-trail figures for a range fully inside a past year
-// (see fetchPickupPeriodTotalsFromLastYearTrail). A range spanning past and current years, or two
-// different past years, falls back to the direct query — an edge case not worth reconstructing.
+// the current year; for a range fully inside a past year, either the reconstructed-from-trail
+// figures (see fetchPickupPeriodTotalsFromLastYearTrail, for a month that's already current or
+// already past this year) or the forward on-books trail (see
+// fetchOnBooksPickupFromSameDayLastYearTrail, for a month that hasn't happened as actuals yet). A
+// range spanning multiple months, or two different past years, falls back to the direct daily_reports
+// query — an edge case not worth reconstructing.
 export async function fetchPickupTotalsForPeriod(hotelId: string, startISO: string, endISO: string): Promise<PickupPeriodTotals> {
   const startYear = dateParts(startISO).year;
   const endYear = dateParts(endISO).year;
   const isPastYearRange = startYear === endYear && startYear < dateParts(todayISO()).year;
-  return isPastYearRange
-    ? fetchPickupPeriodTotalsFromLastYearTrail(hotelId, startISO, endISO)
-    : fetchPickupPeriodTotals(hotelId, startISO, endISO);
+  if (!isPastYearRange) return fetchPickupPeriodTotals(hotelId, startISO, endISO);
+
+  const shiftedStart = shiftYears(startISO, 1);
+  const shiftedEnd = shiftYears(endISO, 1);
+  const { month: startMonth, year: shiftedStartYear } = dateParts(shiftedStart);
+  const { month: endMonth } = dateParts(shiftedEnd);
+  const { month: currentMonth } = dateParts(todayISO());
+
+  if (startMonth === endMonth && startMonth > currentMonth) {
+    return fetchOnBooksPickupFromSameDayLastYearTrail(
+      hotelId, startMonth, shiftedStartYear, dateParts(startISO).day, dateParts(endISO).day,
+    );
+  }
+
+  return fetchPickupPeriodTotalsFromLastYearTrail(hotelId, startISO, endISO);
 }
 
 export interface ReportSnapshot {
@@ -597,6 +673,12 @@ export interface OnBooksMonthInput {
   roomsLastYear?: number | null;
   revenueLastYear?: number | null;
   occupancyLastYear?: number | null;
+  // The day-by-day moving equivalent of the above — e.g. August 5's row carries "September 5,
+  // 2025"'s cumulative total, not September's whole-month final result. Same undefined/null
+  // convention: undefined when untouched by the caller, null when the file had no reading.
+  roomsSameDayLastYear?: number | null;
+  revenueSameDayLastYear?: number | null;
+  occupancySameDayLastYear?: number | null;
 }
 
 export interface StayMonthDef {
@@ -654,6 +736,9 @@ export async function fetchOnBooksForDate(hotelId: string, dateISO: string): Pro
       roomsLastYear: found?.rooms_last_year ?? null,
       revenueLastYear: found?.revenue_last_year ?? null,
       occupancyLastYear: found?.occupancy_last_year ?? null,
+      roomsSameDayLastYear: found?.rooms_same_day_last_year ?? null,
+      revenueSameDayLastYear: found?.revenue_same_day_last_year ?? null,
+      occupancySameDayLastYear: found?.occupancy_same_day_last_year ?? null,
     };
   });
 }
@@ -706,6 +791,9 @@ export async function saveOnBooksForDate(hotelId: string, dateISO: string, entri
     if (e.roomsLastYear !== undefined) row.rooms_last_year = e.roomsLastYear;
     if (e.revenueLastYear !== undefined) row.revenue_last_year = e.revenueLastYear;
     if (e.occupancyLastYear !== undefined) row.occupancy_last_year = e.occupancyLastYear;
+    if (e.roomsSameDayLastYear !== undefined) row.rooms_same_day_last_year = e.roomsSameDayLastYear;
+    if (e.revenueSameDayLastYear !== undefined) row.revenue_same_day_last_year = e.revenueSameDayLastYear;
+    if (e.occupancySameDayLastYear !== undefined) row.occupancy_same_day_last_year = e.occupancySameDayLastYear;
     return row;
   });
   const { error } = await upsertOnBooksSnapshotRows(payload);
@@ -811,6 +899,13 @@ export async function importOnBooksMonths(hotelId: string, months: ParsedMonthMe
     roomsLastYear: m.roomNights.totalLastYear,
     revenueLastYear: m.revenue.totalLastYear,
     occupancyLastYear: normalizePercentOrNull(m.occupancy.totalLastYear),
+    // The file's "Same Day Last Year" column for this same month — a moving day-by-day figure
+    // (e.g. today's row carries "September 5, 2025" if today is the 5th), the only way to
+    // reconstruct last year's pickup for a stay month that hasn't happened as actuals yet — see
+    // fetchOnBooksPickupFromSameDayLastYearTrail.
+    roomsSameDayLastYear: m.roomNights.sameDayLastYear,
+    revenueSameDayLastYear: m.revenue.sameDayLastYear,
+    occupancySameDayLastYear: normalizePercentOrNull(m.occupancy.sameDayLastYear),
   }));
   await saveOnBooksForDate(hotelId, asOfDateISO, entries);
   return futureMonths.length;

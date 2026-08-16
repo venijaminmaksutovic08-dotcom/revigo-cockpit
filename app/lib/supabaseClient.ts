@@ -60,15 +60,23 @@ export interface OnBooksSnapshotRow {
   rooms_last_year?: number | null;
   revenue_last_year?: number | null;
   occupancy_last_year?: number | null;
+  // Optional: the SAME-DAY last-year columns migration (20260814000000) — a moving day-by-day
+  // figure, distinct from the whole-month final totals above. Also degrades gracefully.
+  rooms_same_day_last_year?: number | null;
+  revenue_same_day_last_year?: number | null;
+  occupancy_same_day_last_year?: number | null;
   notes: string | null;
   created_at: string;
 }
 
-const LAST_YEAR_ONBOOKS_KEYS = ["rooms_last_year", "revenue_last_year", "occupancy_last_year"] as const;
+const LAST_YEAR_ONBOOKS_KEYS = [
+  "rooms_last_year", "revenue_last_year", "occupancy_last_year",
+  "rooms_same_day_last_year", "revenue_same_day_last_year", "occupancy_same_day_last_year",
+] as const;
 
 // Upserts onbooks_snapshots rows, tolerating an unapplied last-year-columns migration: if those
 // columns don't exist yet, retries once with them stripped from every row rather than failing the
-// whole on-books save (this year's rooms/revenue/occupancy) over three extra fields.
+// whole on-books save (this year's rooms/revenue/occupancy) over a few extra fields.
 export async function upsertOnBooksSnapshotRows(payload: Record<string, unknown>[]) {
   const first = await supabase.from("onbooks_snapshots").upsert(payload, { onConflict: "hotel_id,snapshot_date,stay_month,stay_year" });
   const hasLastYearFields = payload.some(row => LAST_YEAR_ONBOOKS_KEYS.some(k => k in row));
