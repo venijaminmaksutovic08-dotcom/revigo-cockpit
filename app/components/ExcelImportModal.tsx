@@ -5,6 +5,7 @@ import { X, FileSpreadsheet, Upload, AlertCircle, CheckCircle2, CalendarClock, C
 import { parseDailyReportExcel, parseDateFromFilename, type ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { importOnBooksMonths, importActualsMonths, todayISO, formatDateSr } from "../lib/dashboardData";
 import { archiveReportImport, describeArchiveMiss } from "../lib/reportArchive";
+import { saveRoomTypeDailyOnBooks, describeRoomTypeSaveMiss } from "../lib/roomTypeOnBooksSave";
 import ArchiveWarningToast from "./ArchiveWarningToast";
 
 interface ExcelImportModalProps {
@@ -42,11 +43,18 @@ export default function ExcelImportModal({ hotelId, hotelName, onImported, onClo
 
   // Guaranteed archive of the raw file + outcome, fired the moment a file is selected — whether it
   // goes on to parse successfully or not, so a broken file still leaves the file + the error behind
-  // for diagnosis instead of vanishing without a trace. A miss is surfaced, never silent.
+  // for diagnosis instead of vanishing without a trace. The per-room-type breakdown is parsed from
+  // the same file independently (a separate pair of sheets — it can succeed even when the aggregate
+  // parse fails) and never blocks the aggregate import either. Both misses are surfaced, never silent.
   async function archiveAttempt(dateISO: string, file: File, months: ParsedMonthMetrics[], parseError: string | null) {
-    const outcome = await archiveReportImport(hotelId, dateISO, file, months, parseError);
-    const warning = describeArchiveMiss(outcome);
-    if (warning) { console.error("Report archive incomplete:", warning); setArchiveWarning(warning); }
+    const [archiveOutcome, roomTypeOutcome] = await Promise.all([
+      archiveReportImport(hotelId, dateISO, file, months, parseError),
+      saveRoomTypeDailyOnBooks(hotelId, dateISO, file),
+    ]);
+    const warning = [describeArchiveMiss(archiveOutcome), describeRoomTypeSaveMiss(roomTypeOutcome)]
+      .filter((m): m is string => m !== null)
+      .join(" ");
+    if (warning) { console.error("Report import incomplete:", warning); setArchiveWarning(warning); }
   }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {

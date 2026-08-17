@@ -53,3 +53,4 @@ ehthumbs.db
 # playwright
 /playwright-report/
 /test-results/
+archive-dump/

@@ -20,6 +20,7 @@ import type { ParsedReportRow } from "../lib/reportImport";
 import type { ParsedMonthMetrics } from "../lib/dailyReportExcelImport";
 import { fetchOnBooksForDate, saveOnBooksForDate, saveMonthlyTargetIfAbsent, importOnBooksMonths, type OnBooksMonthInput } from "../lib/dashboardData";
 import { archiveReportImport, describeArchiveMiss } from "../lib/reportArchive";
+import { saveRoomTypeDailyOnBooks, describeRoomTypeSaveMiss } from "../lib/roomTypeOnBooksSave";
 
 // ── Constants ──────────────────────────────────────────────────────────────────
 
@@ -527,11 +528,18 @@ export default function MesecniPage() {
           onFileSelected={(file, allMonths, parseError) => {
             // Guaranteed archive of the raw file + outcome, fired the moment a file is selected —
             // whether it goes on to parse successfully or not, so a broken file still leaves the
-            // file + the error behind for diagnosis. A miss is surfaced, never silent.
+            // file + the error behind for diagnosis. The per-room-type breakdown is parsed from the
+            // same file independently and never blocks the aggregate import either. Both misses are
+            // surfaced the same way, never silent.
             if (!selectedHotel) return;
-            archiveReportImport(selectedHotel, openDate, file, allMonths, parseError).then(outcome => {
-              const warning = describeArchiveMiss(outcome);
-              if (warning) { console.error("Report archive incomplete:", warning); setArchiveWarning(warning); }
+            Promise.all([
+              archiveReportImport(selectedHotel, openDate, file, allMonths, parseError),
+              saveRoomTypeDailyOnBooks(selectedHotel, openDate, file),
+            ]).then(([archiveOutcome, roomTypeOutcome]) => {
+              const warning = [describeArchiveMiss(archiveOutcome), describeRoomTypeSaveMiss(roomTypeOutcome)]
+                .filter((m): m is string => m !== null)
+                .join(" ");
+              if (warning) { console.error("Report import incomplete:", warning); setArchiveWarning(warning); }
             });
           }}
           onConfirm={async (rows: ParsedReportRow[], allMonths: ParsedMonthMetrics[]) => {

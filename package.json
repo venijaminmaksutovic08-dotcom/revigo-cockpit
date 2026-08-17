@@ -10,7 +10,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON app/lib/dailyReportExcelParse.test.ts"
+    "test": "node --test --disable-warning=MODULE_TYPELESS_PACKAGE_JSON app/lib/dailyReportExcelParse.test.ts app/lib/roomTypeSheetParse.test.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.105.0",
