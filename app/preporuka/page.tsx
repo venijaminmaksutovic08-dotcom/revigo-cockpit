@@ -18,6 +18,12 @@ import {
   type RecommendationInputs, type Verdict, type ConfidenceLabel,
 } from "../lib/priceRecommendation";
 import {
+  computeHotelOccupancyForDate, computeHotelPickupPerDay, computeRoomTypeAdjustment,
+  matchesArchiveRoomType, enforcePriceLadder, resolveTypeNudgePercent,
+  type RoomTypeOnBooksRow, type LadderInput, type RoomTypeAdjustmentResult,
+} from "../lib/roomTypeRecommendation";
+import { fetchRoomTypeOnBooksForDate } from "../lib/roomTypeOnBooksData";
+import {
   fetchCompetitorSnapshot, saveCompetitorSnapshot, type CompetitorSnapshotRow,
 } from "../lib/competitorSnapshot";
 import type { CompetitorResult } from "../api/competitors/route";
@@ -39,6 +45,24 @@ function isWeekendDate(dateISO: string): boolean {
 
 function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+// Explains, per room type, why its verdict deviates from the hotel-wide base — or plainly says
+// there's no per-type data for this date, never silently falling back without saying so.
+function roomTypeReasonText(adjustment: RoomTypeAdjustmentResult, hotelOccPct: number | null, laddered: boolean): string | null {
+  const parts: string[] = [];
+  if (!adjustment.dataAvailable) {
+    parts.push("Nema podataka po tipu sobe za ovaj datum");
+  } else if (adjustment.direction === "hotter" || adjustment.direction === "colder") {
+    const typeOcc = adjustment.occPct != null ? Math.round(adjustment.occPct) : null;
+    const hotelOcc = hotelOccPct != null ? Math.round(hotelOccPct) : null;
+    if (typeOcc != null && hotelOcc != null) {
+      const dir = adjustment.direction === "hotter" ? "iznad proseka hotela" : "ispod proseka hotela";
+      parts.push(`Popunjenost ${typeOcc}% vs ${hotelOcc}% hotel — ${dir}`);
+    }
+  }
+  if (laddered) parts.push("cena ograničena da ne naruši poredak cena");
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 const VERDICT_STYLES: Record<Verdict, { bg: string; border: string; color: string; icon: typeof TrendingUp }> = {
@@ -133,6 +157,21 @@ export default function PreporukaPage() {
     })();
     return () => { cancelled = true; };
   }, [selectedHotel, selectedDate]);
+
+  // ── Per-room-type on-books (room_type_daily_onbooks) for the exact stay date ───────────────
+  // Replaces the monthly-pace fallback for the PER-TYPE view only — the hotel-wide base above keeps
+  // using its own existing sources unchanged. Empty (never invented) when the archive has no row
+  // for this stay date at all.
+  const [roomTypeRows, setRoomTypeRows] = useState<RoomTypeOnBooksRow[]>([]);
+  useEffect(() => {
+    if (!selectedHotel || !selectedDate) { setRoomTypeRows([]); return; }
+    let cancelled = false;
+    fetchRoomTypeOnBooksForDate(selectedHotel, selectedDate).then(rows => { if (!cancelled) setRoomTypeRows(rows); });
+    return () => { cancelled = true; };
+  }, [selectedHotel, selectedDate]);
+
+  const hotelOccForDate = useMemo(() => computeHotelOccupancyForDate(roomTypeRows), [roomTypeRows]);
+  const hotelPickupPerDay = useMemo(() => computeHotelPickupPerDay(roomTypeRows), [roomTypeRows]);
 
   // ── Competitor prices — auto-pulled from the same SerpAPI feed as the Dashboard's competitor
   // section, but cached per (hotel, stay date) in Supabase so a date is only ever queried once:
@@ -311,10 +350,31 @@ export default function PreporukaPage() {
 
   const recommendation = useMemo(() => computeRecommendation(inputs), [inputs]);
 
-  const suggestions = ROOM_TYPE_DEFS.map(def => {
-    const current = hotel?.[HOTEL_PRICE_FIELD[def.key]] ?? null;
-    return { ...def, current, suggested: suggestedPrice(current, recommendation.nudgePercent, recommendation.verdict) };
-  });
+  // Per-type: match each configured price slot against whatever room_type codes the archive
+  // actually has for this hotel (never assumed — see matchesArchiveRoomType), layer a ONE-notch
+  // adjustment on top of the hotel-wide base verdict, price it with the SAME base nudge% (only the
+  // verdict driving suggestedPrice's HOLD-means-no-change rule differs per type), then enforce the
+  // hotel's own baseline price ordering across all types together.
+  const suggestions = useMemo(() => {
+    const withAdjustment = ROOM_TYPE_DEFS.map(def => {
+      const current = hotel?.[HOTEL_PRICE_FIELD[def.key]] ?? null;
+      const matchedRow = roomTypeRows.find(r => matchesArchiveRoomType(r.roomType, def.key, def.label)) ?? null;
+      const adjustment = computeRoomTypeAdjustment(matchedRow, hotelOccForDate.occPct, hotelPickupPerDay, recommendation.verdict);
+      const typeNudgePercent = resolveTypeNudgePercent(recommendation.verdict, recommendation.nudgePercent, adjustment.verdict);
+      const rawSuggested = suggestedPrice(current, typeNudgePercent, adjustment.verdict);
+      return { ...def, current, adjustment, rawSuggested };
+    });
+
+    const ladderInputs: LadderInput[] = withAdjustment.map(r => ({
+      roomTypeKey: r.key, baselinePrice: r.current, suggestedPrice: r.rawSuggested,
+    }));
+    const ladderByKey = new Map(enforcePriceLadder(ladderInputs).map(r => [r.roomTypeKey, r]));
+
+    return withAdjustment.map(r => {
+      const ladder = ladderByKey.get(r.key);
+      return { ...r, suggested: ladder?.finalPrice ?? r.rawSuggested, laddered: ladder?.clamped ?? false };
+    });
+  }, [hotel, roomTypeRows, hotelOccForDate.occPct, hotelPickupPerDay, recommendation.verdict, recommendation.nudgePercent]);
 
   const [acceptingKey, setAcceptingKey] = useState<RoomTypeKey | null>(null);
   const acceptSuggestion = useCallback(async (key: RoomTypeKey, value: number) => {
@@ -592,9 +652,32 @@ export default function PreporukaPage() {
           <tbody>
             {suggestions.map(row => {
               const diff = row.current != null && row.suggested != null ? row.suggested - row.current : null;
+              const typeStyle = VERDICT_STYLES[row.adjustment.verdict];
+              const deviatesFromBase = row.adjustment.verdict !== recommendation.verdict;
+              const reasonText = roomTypeReasonText(row.adjustment, hotelOccForDate.occPct, row.laddered);
               return (
                 <tr key={row.key} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                  <td style={{ padding: "12px 20px", fontSize: 13, fontWeight: 600, color: "#374151" }}>{row.label}</td>
+                  <td style={{ padding: "12px 20px", fontSize: 13, fontWeight: 600, color: "#374151" }}>
+                    <div className="flex items-center gap-2">
+                      <span>{row.label}</span>
+                      {deviatesFromBase && (
+                        <span
+                          className="rounded-full"
+                          style={{
+                            fontSize: 9, fontWeight: 700, padding: "2px 7px",
+                            background: typeStyle.bg, color: typeStyle.color, border: `1px solid ${typeStyle.border}`,
+                          }}
+                        >
+                          {verdictLabel(row.adjustment.verdict)}
+                        </span>
+                      )}
+                    </div>
+                    {reasonText && (
+                      <div style={{ fontSize: 10.5, fontWeight: 400, color: row.laddered ? "#b45309" : "#9ca3af", marginTop: 2 }}>
+                        {reasonText}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: "12px 20px", textAlign: "right", fontSize: 13, color: "#111827", fontVariantNumeric: "tabular-nums" }}>
                     {row.current != null ? fmtEur(row.current) : "—"}
                   </td>
