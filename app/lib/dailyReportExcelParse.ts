@@ -50,6 +50,10 @@ export interface ParseDailyReportResult {
   // with it" (surface the error).
   sheetFound: boolean;
   error: string | null;
+  // Set only for a recognized wrong-file-type signature (see looksLikeAccessExport) — undefined for
+  // every other error, including the generic "no matching sheet" one. Lets the UI render this case
+  // differently later without having to pattern-match the error text.
+  errorKind?: "wrong_report_type";
 }
 
 export type MetricRowKey = "roomNights" | "revenue" | "adr" | "occupancy" | "revpar";
@@ -255,6 +259,51 @@ function describeSheetLabels(raw: unknown[][]): string {
   return foundList.length ? `pronađeno: ${foundList.join(", ")}` : "nijedna tražena kolona nije prepoznata";
 }
 
+// Row-3 field names unique to the "Logo A3" report ProSoft/Access exports directly (a print-layout
+// room list, not the Daily report pace workbook this app needs) — seen in the two real uploads that
+// prompted this check. Matched via normalizeCell, so case/diacritics/spacing don't matter.
+const ACCESS_ROW3_MARKERS = ["datum", "strana", "od dtm", "kontidsoba", "do dtm", "lukp"];
+
+// Only ever called after the normal sheet/column search has ALREADY found nothing — this must never
+// fire for a file that would otherwise have parsed, so each signal here is something the real Daily
+// report workbook never has (a single sheet literally named "Logo A3", an Access-authored file, or
+// that report's own distinctive row-3 field names) rather than anything about what's missing.
+function looksLikeAccessExport(workbook: XLSX.WorkBook): boolean {
+  const singleSheetName = workbook.SheetNames.length === 1 ? workbook.SheetNames[0] : null;
+
+  if (singleSheetName && singleSheetName.trim() === "Logo A3") return true;
+
+  const application = String((workbook.Props as { Application?: unknown } | undefined)?.Application ?? "");
+  if (application.toLowerCase().includes("microsoft access")) return true;
+
+  if (singleSheetName) {
+    let row3: unknown[] = [];
+    try {
+      const aoa = XLSX.utils.sheet_to_json<unknown[]>(workbook.Sheets[singleSheetName], { header: 1, defval: "" });
+      row3 = aoa[2] ?? [];
+    } catch {
+      row3 = [];
+    }
+    const normRow3 = row3.map(v => normalizeCell(v));
+    const hits = ACCESS_ROW3_MARKERS.filter(marker => normRow3.includes(marker));
+    if (hits.length >= 3) return true;
+  }
+
+  return false;
+}
+
+function wrongReportTypeMessage(workbook: XLSX.WorkBook, fileSizeBytes: number): string {
+  const sheetNames = workbook.SheetNames.map(n => `„${n}“`).join(", ");
+  const sheetPart = workbook.SheetNames.length === 1 ? `jedan list (${sheetNames})` : `${workbook.SheetNames.length} lista (${sheetNames})`;
+  const sizeKB = Math.round(fileSizeBytes / 1024);
+  return (
+    `Pogrešan fajl. Ovo je izveštaj izvezen direktno iz ProSofta — ima ${sheetPart} i oko ${sizeKB} KB. ` +
+    `Aplikaciji treba Daily report koji skidate sa Google Sheet-a: tri lista ` +
+    `(Daily report, Day by day, Day By Day Input), oko 120 KB. ` +
+    `Izaberite taj fajl i pokušajte ponovo.`
+  );
+}
+
 function readMetricRow(row: unknown[], cols: OnBooksColumnMap): MetricColumnValues {
   return {
     totalLastYear: cols.totalLastYear !== undefined ? toNumberOrMissing(row[cols.totalLastYear]) : null,
@@ -312,6 +361,14 @@ export async function parseDailyReportExcel(file: File): Promise<ParseDailyRepor
   }
 
   if (!raw || !cols) {
+    // Only checked here, after the normal search has already found nothing — a wrong-file-type
+    // signature never overrides a file that would otherwise have parsed. Named and sized concretely
+    // (not just "wrong file") since the two files sit in the same folder under similar date names
+    // and are otherwise impossible to tell apart.
+    if (looksLikeAccessExport(workbook)) {
+      return { months: [], sheetFound: true, error: wrongReportTypeMessage(workbook, file.size), errorKind: "wrong_report_type" };
+    }
+
     // sheetFound: true (not false) — this genuinely is (or was meant to be) this report format,
     // so the caller should surface this error directly rather than silently trying some other
     // parser that expects a date column this sheet will never have. The message names exactly what

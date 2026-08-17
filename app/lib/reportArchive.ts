@@ -88,6 +88,17 @@ export interface ArchiveOutcome {
 // visible warning rather than let a miss go unnoticed. parseError is null for a successful parse
 // (months then carries the full result) or the parser's error message for a failed one (months is
 // then []).
+// Two different failed attempts on the same date collapse into the SAME report_imports row (see
+// saveReportImportArchive's upsert on hotel_id+report_date) — so if the parser gives the same
+// generic error text both times, a retry leaves no visible trace that it even happened. Appending
+// the attempted file's name, size, and a timestamp makes two attempts distinguishable in the row's
+// text without changing the schema or the upsert key (a separate decision).
+function withAttemptDiagnostics(parseError: string, file: File | null): string {
+  const filename = file?.name ?? "(nepoznat fajl)";
+  const sizeKB = file ? `${Math.round(file.size / 1024)} KB` : "veličina nepoznata";
+  return `${parseError} [pokušaj: ${filename}, ${sizeKB}, ${new Date().toISOString()}]`;
+}
+
 export async function archiveReportImport(
   hotelId: string,
   dateISO: string,
@@ -96,7 +107,8 @@ export async function archiveReportImport(
   parseError: string | null,
 ): Promise<ArchiveOutcome> {
   const filePath = file ? await archiveReportFile(hotelId, dateISO, file) : null;
-  const dataArchived = await saveReportImportArchive(hotelId, dateISO, months, file?.name ?? null, filePath, parseError);
+  const diagnosticParseError = parseError !== null ? withAttemptDiagnostics(parseError, file) : null;
+  const dataArchived = await saveReportImportArchive(hotelId, dateISO, months, file?.name ?? null, filePath, diagnosticParseError);
   return { fileArchived: filePath !== null, dataArchived };
 }
 

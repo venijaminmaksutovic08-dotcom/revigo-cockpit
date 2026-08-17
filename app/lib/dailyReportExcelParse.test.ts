@@ -141,10 +141,59 @@ test("Unrecognized file yields sheetFound=true and a specific error naming label
   assert.equal(res.sheetFound, true, "it IS meant to be this format, so surface the error");
   assert.equal(res.months.length, 0);
   assert.ok(res.error, "error present");
+  assert.equal(res.errorKind, undefined, "an unrelated file must not be misclassified as wrong_report_type");
   // Names exactly what it searched for, in both languages…
   assert.match(res.error!, /Yesterday\/Juče/);
   assert.match(res.error!, /Today\/Danas/);
   // …and which sheets it looked in.
   assert.match(res.error!, /Sheet1/);
   assert.match(res.error!, /Notes/);
+});
+
+test("Ordinary missing-columns failure (normal sheet name) still returns the existing generic error, unchanged", async () => {
+  const res = await parse(xlsxFile(
+    { "Daily report": [["", "Queen synthetic"], ["", "", "", "", "", "", "", "Target"], ["January", "Room Nights", "100"]] },
+    "Queen Daily report 27_07.xlsx",
+  ));
+  assert.equal(res.sheetFound, true);
+  assert.equal(res.months.length, 0);
+  assert.ok(res.error);
+  assert.equal(res.errorKind, undefined, "an ordinary parse failure must not be misclassified as wrong_report_type");
+  assert.match(res.error!, /Nije prepoznat list sa dnevnim izveštajem/);
+});
+
+// Row-3 field names from the real "Logo A3" print export ProSoft/Access generates — the wrong file
+// the brother's two failed uploads turned out to be, not the Daily report workbook this app needs.
+function accessRow3(): unknown[] {
+  return ["Datum", "strana", "OD_DTM", "Text432", "KontIdSoba", "DO_DTM", "Text434", "LUKP"];
+}
+
+test("A single-sheet 'Logo A3' Access export is detected as wrong_report_type, not the generic error", async () => {
+  const rows: unknown[][] = [
+    ["", "Apart hotel & SPA Queen of Zlatibor"],
+    [],
+    accessRow3(),
+    ["", "", "", "", "", "", "", "", "", "", "", "", "", "", "CLS", "95.00", "54"],
+  ];
+  const res = await parse(xlsxFile({ "Logo A3": rows }, "13.08.26.xlsx"));
+  assert.equal(res.months.length, 0);
+  assert.equal(res.errorKind, "wrong_report_type");
+  assert.ok(res.error);
+  assert.match(res.error!, /ProSofta/);
+  assert.match(res.error!, /Logo A3/);
+  assert.match(res.error!, /Daily report, Day by day, Day By Day Input/);
+  assert.match(res.error!, /Google Sheet/);
+});
+
+test("A strong wrong-file-type signal never overrides a file that actually has valid Daily report columns", async () => {
+  // Can't literally round-trip a custom workbook Props.Application via this xlsx library (its
+  // writer hardcodes Application="SheetJS" on every write — see write_ext_props in xlsx.js), so this
+  // exercises the sheet-NAME signal instead, which is the strongest of the three checks. The
+  // guarantee is identical for all three: they only run inside parseDailyReportExcel's
+  // `if (!raw || !cols)` branch, so a file that resolves real Yesterday/Today/Target columns can
+  // never reach any of them, regardless of its sheet name, Application property, or row-3 content.
+  const res = await parse(xlsxFile({ "Logo A3": baseAOA() }, "Queen Daily report 27_07.xlsx"));
+  assert.equal(res.error, null);
+  assert.equal(res.errorKind, undefined);
+  assertAllMonths(res.months);
 });
