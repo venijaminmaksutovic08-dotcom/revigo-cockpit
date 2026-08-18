@@ -4,10 +4,13 @@
 // competitorLookup.test.ts.
 
 // null means the lookup ran to completion — the caller's own result (possibly zero competitors
-// found) is the real, final answer, not a failure. The other two values mean it never really ran:
-// "quota_exceeded" (blocked, SerpAPI's own monthly limit) or "not_configured" (missing SERPAPI_KEY
-// server-side, or an unexpected failure calling out — see the API route's catch block).
-export type CompetitorLookupFailure = "quota_exceeded" | "not_configured" | null;
+// found) is the real, final answer, not a failure. The other values mean it never really ran, or ran
+// but produced nothing usable: "quota_exceeded" (blocked, SerpAPI's own monthly limit),
+// "not_configured" (missing SERPAPI_KEY server-side, or an unexpected failure calling out — see the
+// API route's catch block), or "no_saved_match" (the hotel has a saved competitors list, but none of
+// them showed up in this date's search results — see competitorAveraging.ts, which refuses to
+// silently widen back out to the raw, unfiltered result set in this case).
+export type CompetitorLookupFailure = "quota_exceeded" | "not_configured" | "no_saved_match" | null;
 
 // Maps the /api/competitors route's HTTP status to why a lookup didn't produce a usable result.
 export function classifyCompetitorLookupStatus(status: number): CompetitorLookupFailure {
@@ -27,6 +30,9 @@ export function competitorEmptyStateMessage(failure: CompetitorLookupFailure): s
   }
   if (failure === "not_configured") {
     return "Provera cena konkurencije nije podešena. Unesi ručno ili obavesti administratora.";
+  }
+  if (failure === "no_saved_match") {
+    return "Nijedan sačuvani konkurent nije pronađen u pretrazi za ovaj datum. Proveri nazive ili unesi ručno.";
   }
   return "Nema dostupnih cena konkurencije za ovaj datum.";
 }

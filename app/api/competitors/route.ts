@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { namesMatch } from "../../lib/competitorMatching";
 
 export interface CompetitorResult {
   name: string;
@@ -151,10 +152,7 @@ export async function GET(request: NextRequest) {
     }
 
     const filtered = ownHotel
-      ? results.filter(r => {
-          const name = r.name.toLowerCase();
-          return !name.includes(ownHotel) && !ownHotel.includes(name);
-        })
+      ? results.filter(r => !namesMatch(r.name, ownHotel))
       : results;
 
     return NextResponse.json(filtered.slice(0, 10));

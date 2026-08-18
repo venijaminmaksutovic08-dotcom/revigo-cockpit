@@ -26,7 +26,9 @@ import { fetchRoomTypeOnBooksForDate } from "../lib/roomTypeOnBooksData";
 import {
   fetchCompetitorSnapshot, saveCompetitorSnapshot, type CompetitorSnapshotRow,
 } from "../lib/competitorSnapshot";
-import { classifyCompetitorLookupStatus, competitorEmptyStateMessage, type CompetitorLookupFailure } from "../lib/competitorLookup";
+import { classifyCompetitorLookupStatus, competitorEmptyStateMessage } from "../lib/competitorLookup";
+import { fetchSavedCompetitorNames } from "../lib/savedCompetitors";
+import { computeCompetitorAverage, outcomeSummary, type CompetitorAverageOutcome, type CompetitorEntry } from "../lib/competitorAveraging";
 import type { CompetitorResult } from "../api/competitors/route";
 import type { EventResult } from "../api/events/route";
 
@@ -80,6 +82,62 @@ const CONFIDENCE_STYLES: Record<ConfidenceLabel, { bg: string; border: string; c
 
 function fmtEur(n: number): string {
   return `${Math.round(n).toLocaleString("sr-RS")}€`;
+}
+
+// Shows exactly which hotels fed competitorAvgEur, and which were tried and excluded/unmatched —
+// this number silently drove the recommendation for weeks (an unfiltered average of everything
+// Google Hotels returns for the city); a bare hotel count is not enough to trust it again.
+function CompetitorBreakdown({ outcome }: { outcome: CompetitorAverageOutcome }) {
+  const rowStyle = { display: "flex", justifyContent: "space-between", gap: 8, padding: "2px 0" };
+  if (outcome.method === "saved" || outcome.method === "saved_none_matched") {
+    return (
+      <details style={{ fontSize: 10.5, color: "#9ca3af", marginTop: 2 }}>
+        <summary style={{ cursor: "pointer", userSelect: "none" }}>
+          Sačuvani konkurenti ({outcome.matches.filter(m => m.matched).length}/{outcome.matches.length} pronađeno za ovaj datum)
+        </summary>
+        {outcome.matches.map(m => (
+          <div key={m.savedName} style={rowStyle}>
+            <span>{m.matched ? "✓" : "✗"} {m.savedName}</span>
+            <span>{m.matched ? fmtEur(m.matched.priceExtracted as number) : "nije pronađen za ovaj datum"}</span>
+          </div>
+        ))}
+      </details>
+    );
+  }
+  const { comparable, excludedOutOfClassBand, excludedNoClass, excludedPriceBand } = outcome.comparability;
+  const excludedTotal = excludedOutOfClassBand.length + excludedNoClass.length + excludedPriceBand.length;
+  if (comparable.length === 0 && excludedTotal === 0) return null;
+  return (
+    <details style={{ fontSize: 10.5, color: "#9ca3af", marginTop: 2 }}>
+      <summary style={{ cursor: "pointer", userSelect: "none" }}>
+        {comparable.length} od {comparable.length + excludedTotal} hotela iz pretrage korišćeno u proseku
+      </summary>
+      {comparable.map(e => (
+        <div key={e.name} style={rowStyle}>
+          <span>✓ {e.name}</span>
+          <span>{fmtEur(e.priceExtracted as number)}</span>
+        </div>
+      ))}
+      {excludedOutOfClassBand.map(e => (
+        <div key={e.name} style={rowStyle}>
+          <span>✗ {e.name}</span>
+          <span>van klase — {fmtEur(e.priceExtracted as number)}</span>
+        </div>
+      ))}
+      {excludedNoClass.map(e => (
+        <div key={e.name} style={rowStyle}>
+          <span>✗ {e.name}</span>
+          <span>nema podatak o klasi — {fmtEur(e.priceExtracted as number)}</span>
+        </div>
+      ))}
+      {excludedPriceBand.map(e => (
+        <div key={e.name} style={rowStyle}>
+          <span>✗ {e.name}</span>
+          <span>van cenovnog opsega — {fmtEur(e.priceExtracted as number)}</span>
+        </div>
+      ))}
+    </details>
+  );
 }
 
 // ── Main page ────────────────────────────────────────────────────────────────
@@ -196,33 +254,59 @@ export default function PreporukaPage() {
   // Same idea for "not configured" — a missing key (or a first unexpected failure) isn't going to
   // fix itself mid-session either, so stop re-attempting on every date change once it's known.
   const notConfiguredBlockedRef = useRef(false);
+  // NOT session-blocked, unlike the two above — whether a saved competitor matches is a per-date
+  // question (a hotel might show up in Google's results for one date and not another), so every new
+  // date deserves its own attempt.
 
   const competitorAvgEur = competitorSnapshot?.avg_price_eur ?? null;
   const competitorCount = competitorSnapshot?.competitor_count ?? 0;
+  // WHICH hotels actually fed the average, and which were tried and excluded/unmatched — see
+  // computeCompetitorAverage. Only populated by a fresh computation this session (auto-fetch on a
+  // cache miss, or "Osveži konkurenciju"); a straight cache hit only has the aggregate stored in
+  // competitor_price_snapshots, so this stays null then — see the render fallback note below for why
+  // that's a known, called-out limitation rather than a silent gap.
+  const [competitorBreakdown, setCompetitorBreakdown] = useState<CompetitorAverageOutcome | null>(null);
 
-  // failure distinguishes WHY there's no usable result — see classifyCompetitorLookupStatus.
+  type CompetitorFetchResult =
+    | { failure: "quota_exceeded" | "not_configured" }
+    | { failure: null; outcome: CompetitorAverageOutcome };
+
+  // Runs the raw search, then decides which subset of results actually feeds the average:
+  //   - saved competitors ("Sačuvani Konkurenti"), matched by name, if the hotel has any saved — see
+  //     computeSavedCompetitorAverage in competitorMatching.ts;
+  //   - otherwise a comparability filter, NOT a plain average of everything Google returns for the
+  //     city — see competitorComparability.ts. Its primary rule (star-class band) needs to know our
+  //     own hotel's star class, which `hotels` doesn't store yet, so it currently always falls back
+  //     to a price-band filter around our own CLS price instead.
   const runCompetitorFetch = useCallback(async (
     dateForFetch: string, ownHotelName: string, hotelCity: string,
-  ): Promise<{ avgEur: number | null; count: number; failure: CompetitorLookupFailure }> => {
+  ): Promise<CompetitorFetchResult> => {
     const checkin = dateForFetch;
     const checkout = shiftDays(dateForFetch, 1);
     const params = new URLSearchParams({ location: hotelCity, checkin, checkout, ownHotel: ownHotelName });
-    const [res, rate] = await Promise.all([
+    const [res, rate, savedNames] = await Promise.all([
       fetch(`/api/competitors?${params}`),
       getEurRsdRate(),
+      selectedHotel ? fetchSavedCompetitorNames(selectedHotel) : Promise.resolve([] as string[]),
     ]);
-    const failure = classifyCompetitorLookupStatus(res.status);
-    if (failure) return { avgEur: null, count: 0, failure };
+    const httpFailure = classifyCompetitorLookupStatus(res.status);
+    if (httpFailure === "quota_exceeded" || httpFailure === "not_configured") return { failure: httpFailure };
     const data: CompetitorResult[] = res.ok ? await res.json() : [];
-    const withPrice = data.filter((r): r is CompetitorResult & { priceExtracted: number } => r.priceExtracted != null);
-    if (withPrice.length === 0) return { avgEur: null, count: 0, failure: null };
-    const avgRsd = withPrice.reduce((sum, r) => sum + r.priceExtracted, 0) / withPrice.length;
-    return { avgEur: avgRsd / rate, count: withPrice.length, failure: null };
-  }, []);
+    // Convert RSD -> EUR up front so every downstream step (matching, comparability, averaging)
+    // works in one consistent unit, matching ourRefPriceEur (hotel.priceCls, stored in EUR).
+    const entries: CompetitorEntry[] = data.map(r => ({
+      name: r.name,
+      priceExtracted: r.priceExtracted != null ? r.priceExtracted / rate : null,
+      hotelClass: r.hotelClass,
+    }));
+    const outcome = computeCompetitorAverage(savedNames, entries, /* ownHotelClassStars: */ null, hotel?.priceCls ?? null);
+    return { failure: null, outcome };
+  }, [selectedHotel, hotel?.priceCls]);
 
   useEffect(() => {
     if (!selectedHotel || !selectedDate || !city) {
       setCompetitorSnapshot(null);
+      setCompetitorBreakdown(null);
       setCompetitorChecked(false);
       return;
     }
@@ -234,6 +318,7 @@ export default function PreporukaPage() {
       if (cancelled) return;
       if (cached) {
         setCompetitorSnapshot(cached);
+        setCompetitorBreakdown(null); // cache hit — no fresh per-hotel breakdown this load
         setCompetitorChecked(true);
         setCompetitorLoading(false);
         return;
@@ -243,23 +328,27 @@ export default function PreporukaPage() {
         // — go straight to the manual fallback instead of firing another request that will just
         // fail the same way.
         setCompetitorSnapshot(null);
+        setCompetitorBreakdown(null);
         setCompetitorChecked(true);
         setCompetitorLoading(false);
         return;
       }
-      const { avgEur, count, failure } = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
+      const result = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
       if (cancelled) return;
-      if (failure) {
-        if (failure === "quota_exceeded") { quotaBlockedRef.current = true; setCompetitorQuotaExceeded(true); }
+      if (result.failure) {
+        if (result.failure === "quota_exceeded") { quotaBlockedRef.current = true; setCompetitorQuotaExceeded(true); }
         else { notConfiguredBlockedRef.current = true; setCompetitorNotConfigured(true); }
         setCompetitorSnapshot(null); // blocked, not checked — never cache a false "found nothing"
+        setCompetitorBreakdown(null);
         setCompetitorChecked(true);
         setCompetitorLoading(false);
         return;
       }
-      const saved = await saveCompetitorSnapshot(selectedHotel, selectedDate, avgEur, count, "auto");
+      const { avgPrice, count } = outcomeSummary(result.outcome);
+      const saved = await saveCompetitorSnapshot(selectedHotel, selectedDate, avgPrice, count, "auto");
       if (cancelled) return;
       setCompetitorSnapshot(saved);
+      setCompetitorBreakdown(result.outcome);
       setCompetitorChecked(true);
       setCompetitorLoading(false);
     })();
@@ -273,16 +362,19 @@ export default function PreporukaPage() {
     if (!selectedHotel || !selectedDate || !city || competitorLoading || quotaBlockedRef.current || notConfiguredBlockedRef.current) return;
     setCompetitorLoading(true);
     try {
-      const { avgEur, count, failure } = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
-      if (failure) {
-        if (failure === "quota_exceeded") { quotaBlockedRef.current = true; setCompetitorQuotaExceeded(true); }
+      const result = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
+      if (result.failure) {
+        if (result.failure === "quota_exceeded") { quotaBlockedRef.current = true; setCompetitorQuotaExceeded(true); }
         else { notConfiguredBlockedRef.current = true; setCompetitorNotConfigured(true); }
         setCompetitorSnapshot(null);
+        setCompetitorBreakdown(null);
         setCompetitorChecked(true);
         return;
       }
-      const saved = await saveCompetitorSnapshot(selectedHotel, selectedDate, avgEur, count, "auto");
+      const { avgPrice, count } = outcomeSummary(result.outcome);
+      const saved = await saveCompetitorSnapshot(selectedHotel, selectedDate, avgPrice, count, "auto");
       setCompetitorSnapshot(saved);
+      setCompetitorBreakdown(result.outcome);
       setCompetitorChecked(true);
     } finally {
       setCompetitorLoading(false);
@@ -308,6 +400,7 @@ export default function PreporukaPage() {
       const avgEur = prices.reduce((sum, n) => sum + n, 0) / prices.length;
       const saved = await saveCompetitorSnapshot(selectedHotel, selectedDate, avgEur, prices.length, "manual");
       setCompetitorSnapshot(saved);
+      setCompetitorBreakdown(null); // manually typed numbers have no per-hotel names to show
       setManualCompetitorInput("");
     } finally {
       setSavingManualCompetitor(false);
@@ -602,15 +695,30 @@ export default function PreporukaPage() {
             {competitorLoading ? "Proveravam cene konkurencije…" : "Čekam datum i hotel da proverim konkurenciju."}
           </div>
         ) : competitorAvgEur != null ? (
-          <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
-            Prosek konkurencije: {fmtEur(competitorAvgEur)} (na osnovu {competitorCount} {competitorCount === 1 ? "hotela" : "hotela"}
-            {competitorSnapshot?.source === "manual" ? ", ručno uneto" : ""})
+          <div style={{ marginTop: 4 }}>
+            <div style={{ fontSize: 11, color: "#9ca3af" }}>
+              Prosek konkurencije: {fmtEur(competitorAvgEur)} (na osnovu {competitorCount} {competitorCount === 1 ? "hotela" : "hotela"}
+              {competitorSnapshot?.source === "manual" ? ", ručno uneto" : ""})
+            </div>
+            {competitorBreakdown ? (
+              <CompetitorBreakdown outcome={competitorBreakdown} />
+            ) : (
+              <div style={{ fontSize: 10.5, color: "#d1d5db", marginTop: 2 }}>
+                Detalji po hotelu nisu dostupni za ovaj (keširani) prikaz — klikni &quot;Osveži konkurenciju&quot; za spisak.
+              </div>
+            )}
           </div>
         ) : (
           <div className="flex flex-col gap-2" style={{ marginTop: 4 }}>
             <div style={{ fontSize: 11, color: competitorQuotaExceeded || competitorNotConfigured ? "#b45309" : "#9ca3af" }}>
-              {competitorEmptyStateMessage(competitorQuotaExceeded ? "quota_exceeded" : competitorNotConfigured ? "not_configured" : null)}
+              {competitorEmptyStateMessage(
+                competitorQuotaExceeded ? "quota_exceeded"
+                  : competitorNotConfigured ? "not_configured"
+                  : competitorBreakdown?.method === "saved_none_matched" ? "no_saved_match"
+                  : null,
+              )}
             </div>
+            {competitorBreakdown?.method === "saved_none_matched" && <CompetitorBreakdown outcome={competitorBreakdown} />}
             <div className="flex items-center gap-2 flex-wrap">
               <input
                 type="text"

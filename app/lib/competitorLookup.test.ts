@@ -36,11 +36,19 @@ test("quota-exceeded keeps its own distinct message, separate from both of the a
   assert.doesNotMatch(msg, /Nema dostupnih cena konkurencije za ovaj datum/);
 });
 
-test("all three messages are distinct from one another", () => {
+test("no_saved_match gets its own distinct message — saved competitors exist but none matched this date", () => {
+  const msg = competitorEmptyStateMessage("no_saved_match");
+  assert.match(msg, /Nijedan sačuvani konkurent/);
+  assert.doesNotMatch(msg, /nije podešena/);
+  assert.doesNotMatch(msg, /Nema dostupnih cena konkurencije za ovaj datum/);
+});
+
+test("all four messages are distinct from one another", () => {
   const messages = [
     competitorEmptyStateMessage("quota_exceeded"),
     competitorEmptyStateMessage("not_configured"),
+    competitorEmptyStateMessage("no_saved_match"),
     competitorEmptyStateMessage(null),
   ];
-  assert.equal(new Set(messages).size, 3);
+  assert.equal(new Set(messages).size, 4);
 });
