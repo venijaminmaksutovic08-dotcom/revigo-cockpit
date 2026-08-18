@@ -100,8 +100,16 @@ export async function GET(request: NextRequest) {
   const q        = (sp.get("q")        ?? "").trim(); // optional: specific hotel name
   const ownHotel = (sp.get("ownHotel") ?? "").trim().toLowerCase();
 
+  // A missing key is a server misconfiguration, not "we looked and found nothing" — callers need
+  // to tell the two apart the same way they already tell quota-exceeded apart (see below), so this
+  // gets its own distinct signal (HTTP 503) instead of silently returning the same `[]` a genuine
+  // empty result returns. Incomplete caller params (location/checkin/checkout), by contrast, are an
+  // internal precondition the real caller always satisfies — not worth a distinct signal.
   const apiKey = process.env.SERPAPI_KEY;
-  if (!apiKey || !location || !checkin || !checkout) {
+  if (!apiKey) {
+    return NextResponse.json({ error: "not_configured" }, { status: 503 });
+  }
+  if (!location || !checkin || !checkout) {
     return NextResponse.json([]);
   }
 
@@ -151,6 +159,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json(filtered.slice(0, 10));
   } catch {
-    return NextResponse.json([]);
+    // An unexpected failure calling out (network error, bad JSON, …) — the lookup didn't run to
+    // completion, so this is NOT "checked, found nothing" either; same distinct signal as a missing
+    // key, so the caller shows the same "not set up" message rather than a false empty result.
+    return NextResponse.json({ error: "lookup_failed" }, { status: 502 });
   }
 }

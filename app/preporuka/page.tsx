@@ -26,6 +26,7 @@ import { fetchRoomTypeOnBooksForDate } from "../lib/roomTypeOnBooksData";
 import {
   fetchCompetitorSnapshot, saveCompetitorSnapshot, type CompetitorSnapshotRow,
 } from "../lib/competitorSnapshot";
+import { classifyCompetitorLookupStatus, competitorEmptyStateMessage, type CompetitorLookupFailure } from "../lib/competitorLookup";
 import type { CompetitorResult } from "../api/competitors/route";
 import type { EventResult } from "../api/events/route";
 
@@ -181,19 +182,28 @@ export default function PreporukaPage() {
   const [competitorLoading, setCompetitorLoading] = useState(false);
   const [competitorChecked, setCompetitorChecked] = useState(false);
   const [competitorQuotaExceeded, setCompetitorQuotaExceeded] = useState(false);
+  // Distinct from "checked, found nothing" — the lookup itself never ran to completion (missing
+  // SERPAPI_KEY server-side, or an unexpected failure calling out). Same confidence-degrading effect
+  // as any other missing competitorAvgEur (see priceRecommendation.ts — it doesn't need to know
+  // WHY the signal is missing), but the UI must say plainly that this isn't a real "found nothing".
+  const [competitorNotConfigured, setCompetitorNotConfigured] = useState(false);
 
   // Once a SerpAPI quota error is seen, stop hitting it again for the rest of the session — a
   // monthly quota won't renew mid-session, so every further attempt would just fail the same way.
   // A ref (not state) so the auto-fetch effect below always reads the latest value synchronously,
   // without needing to be re-triggered by a state change.
   const quotaBlockedRef = useRef(false);
+  // Same idea for "not configured" — a missing key (or a first unexpected failure) isn't going to
+  // fix itself mid-session either, so stop re-attempting on every date change once it's known.
+  const notConfiguredBlockedRef = useRef(false);
 
   const competitorAvgEur = competitorSnapshot?.avg_price_eur ?? null;
   const competitorCount = competitorSnapshot?.competitor_count ?? 0;
 
+  // failure distinguishes WHY there's no usable result — see classifyCompetitorLookupStatus.
   const runCompetitorFetch = useCallback(async (
     dateForFetch: string, ownHotelName: string, hotelCity: string,
-  ): Promise<{ avgEur: number | null; count: number; quotaExceeded: boolean }> => {
+  ): Promise<{ avgEur: number | null; count: number; failure: CompetitorLookupFailure }> => {
     const checkin = dateForFetch;
     const checkout = shiftDays(dateForFetch, 1);
     const params = new URLSearchParams({ location: hotelCity, checkin, checkout, ownHotel: ownHotelName });
@@ -201,12 +211,13 @@ export default function PreporukaPage() {
       fetch(`/api/competitors?${params}`),
       getEurRsdRate(),
     ]);
-    if (res.status === 429) return { avgEur: null, count: 0, quotaExceeded: true };
+    const failure = classifyCompetitorLookupStatus(res.status);
+    if (failure) return { avgEur: null, count: 0, failure };
     const data: CompetitorResult[] = res.ok ? await res.json() : [];
     const withPrice = data.filter((r): r is CompetitorResult & { priceExtracted: number } => r.priceExtracted != null);
-    if (withPrice.length === 0) return { avgEur: null, count: 0, quotaExceeded: false };
+    if (withPrice.length === 0) return { avgEur: null, count: 0, failure: null };
     const avgRsd = withPrice.reduce((sum, r) => sum + r.priceExtracted, 0) / withPrice.length;
-    return { avgEur: avgRsd / rate, count: withPrice.length, quotaExceeded: false };
+    return { avgEur: avgRsd / rate, count: withPrice.length, failure: null };
   }, []);
 
   useEffect(() => {
@@ -227,19 +238,20 @@ export default function PreporukaPage() {
         setCompetitorLoading(false);
         return;
       }
-      if (quotaBlockedRef.current) {
-        // Quota already known to be exhausted this session — go straight to the manual fallback
-        // instead of firing another request that will just fail the same way.
+      if (quotaBlockedRef.current || notConfiguredBlockedRef.current) {
+        // Already known to be blocked this session (quota, or the lookup not being set up at all)
+        // — go straight to the manual fallback instead of firing another request that will just
+        // fail the same way.
         setCompetitorSnapshot(null);
         setCompetitorChecked(true);
         setCompetitorLoading(false);
         return;
       }
-      const { avgEur, count, quotaExceeded } = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
+      const { avgEur, count, failure } = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
       if (cancelled) return;
-      if (quotaExceeded) {
-        quotaBlockedRef.current = true;
-        setCompetitorQuotaExceeded(true);
+      if (failure) {
+        if (failure === "quota_exceeded") { quotaBlockedRef.current = true; setCompetitorQuotaExceeded(true); }
+        else { notConfiguredBlockedRef.current = true; setCompetitorNotConfigured(true); }
         setCompetitorSnapshot(null); // blocked, not checked — never cache a false "found nothing"
         setCompetitorChecked(true);
         setCompetitorLoading(false);
@@ -255,15 +267,16 @@ export default function PreporukaPage() {
   }, [selectedHotel, selectedDate, city, hotel?.name, runCompetitorFetch]);
 
   // Manual refresh — bypasses the cache and overwrites it with a fresh pull. Also respects the
-  // session-wide quota block: once exhausted, this becomes a no-op rather than another failed call.
+  // session-wide blocks: once quota-exceeded or not-configured is known, this becomes a no-op
+  // rather than another failed call.
   const refreshCompetitors = useCallback(async () => {
-    if (!selectedHotel || !selectedDate || !city || competitorLoading || quotaBlockedRef.current) return;
+    if (!selectedHotel || !selectedDate || !city || competitorLoading || quotaBlockedRef.current || notConfiguredBlockedRef.current) return;
     setCompetitorLoading(true);
     try {
-      const { avgEur, count, quotaExceeded } = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
-      if (quotaExceeded) {
-        quotaBlockedRef.current = true;
-        setCompetitorQuotaExceeded(true);
+      const { avgEur, count, failure } = await runCompetitorFetch(selectedDate, hotel?.name ?? "", city);
+      if (failure) {
+        if (failure === "quota_exceeded") { quotaBlockedRef.current = true; setCompetitorQuotaExceeded(true); }
+        else { notConfiguredBlockedRef.current = true; setCompetitorNotConfigured(true); }
         setCompetitorSnapshot(null);
         setCompetitorChecked(true);
         return;
@@ -488,20 +501,24 @@ export default function PreporukaPage() {
         </div>
         <button
           onClick={refreshCompetitors}
-          disabled={competitorLoading || !city || competitorQuotaExceeded}
+          disabled={competitorLoading || !city || competitorQuotaExceeded || competitorNotConfigured}
           className="flex items-center gap-2"
-          title={competitorQuotaExceeded ? "Mesečni limit SerpAPI pretraga je dostignut" : undefined}
+          title={
+            competitorQuotaExceeded ? "Mesečni limit SerpAPI pretraga je dostignut"
+            : competitorNotConfigured ? "Provera cena konkurencije nije podešena"
+            : undefined
+          }
           style={{
             height: 34, paddingLeft: 14, paddingRight: 14, borderRadius: 7,
             border: "1px solid rgba(201,168,76,0.35)",
-            background: competitorLoading || competitorQuotaExceeded ? "#f9fafb" : "rgba(201,168,76,0.06)",
-            color: competitorQuotaExceeded ? "#d1d5db" : "#C9A84C", fontSize: 12, fontWeight: 600,
-            cursor: competitorLoading || competitorQuotaExceeded ? "default" : "pointer",
+            background: competitorLoading || competitorQuotaExceeded || competitorNotConfigured ? "#f9fafb" : "rgba(201,168,76,0.06)",
+            color: competitorQuotaExceeded || competitorNotConfigured ? "#d1d5db" : "#C9A84C", fontSize: 12, fontWeight: 600,
+            cursor: competitorLoading || competitorQuotaExceeded || competitorNotConfigured ? "default" : "pointer",
           }}
         >
           <Building2 size={13} />
           <RefreshCw size={12} className={competitorLoading ? "animate-spin" : ""} />
-          {competitorLoading ? "Proveravam..." : competitorQuotaExceeded ? "Limit dostignut" : "Osveži konkurenciju"}
+          {competitorLoading ? "Proveravam..." : competitorQuotaExceeded ? "Limit dostignut" : competitorNotConfigured ? "Nije podešeno" : "Osveži konkurenciju"}
         </button>
       </div>
 
@@ -591,10 +608,8 @@ export default function PreporukaPage() {
           </div>
         ) : (
           <div className="flex flex-col gap-2" style={{ marginTop: 4 }}>
-            <div style={{ fontSize: 11, color: competitorQuotaExceeded ? "#b45309" : "#9ca3af" }}>
-              {competitorQuotaExceeded
-                ? "Cene konkurencije trenutno nedostupne — mesečni limit pretraga je dostignut. Unesi ručno ili pokušaj kasnije."
-                : "Nema dostupnih cena konkurencije za ovaj datum."}
+            <div style={{ fontSize: 11, color: competitorQuotaExceeded || competitorNotConfigured ? "#b45309" : "#9ca3af" }}>
+              {competitorEmptyStateMessage(competitorQuotaExceeded ? "quota_exceeded" : competitorNotConfigured ? "not_configured" : null)}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               <input
