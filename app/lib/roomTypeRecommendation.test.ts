@@ -184,8 +184,10 @@ test("enforcePriceLadder clamps an inversion by raising the lagging price to the
   assert.equal(byKey.A.clamped, false);
   assert.equal(byKey.B.finalPrice, 100, "clamped up to preserve baseline ordering");
   assert.equal(byKey.B.clamped, true);
+  assert.equal(byKey.B.clampedAgainstKey, "A", "names exactly which type's price set the floor");
   assert.equal(byKey.C.finalPrice, 200);
   assert.equal(byKey.C.clamped, false);
+  assert.equal(byKey.C.clampedAgainstKey, null);
 });
 
 test("enforcePriceLadder does nothing when the order was never violated", () => {

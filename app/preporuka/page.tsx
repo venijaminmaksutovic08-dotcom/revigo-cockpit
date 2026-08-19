@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { Fragment, useState, useEffect, useCallback, useMemo, useRef } from "react";
 import {
   TrendingUp, TrendingDown, Minus, Building2, RefreshCw, Check,
   AlertCircle, CalendarDays,
@@ -29,6 +29,7 @@ import {
 import { classifyCompetitorLookupStatus, competitorEmptyStateMessage } from "../lib/competitorLookup";
 import { fetchSavedCompetitorNames } from "../lib/savedCompetitors";
 import { computeCompetitorAverage, outcomeSummary, type CompetitorAverageOutcome, type CompetitorEntry } from "../lib/competitorAveraging";
+import { explainBaseRecommendation, explainRoomTypeAdjustment } from "../lib/recommendationExplain";
 import type { CompetitorResult } from "../api/competitors/route";
 import type { EventResult } from "../api/events/route";
 
@@ -61,7 +62,9 @@ function roomTypeReasonText(adjustment: RoomTypeAdjustmentResult, hotelOccPct: n
     const hotelOcc = hotelOccPct != null ? Math.round(hotelOccPct) : null;
     if (typeOcc != null && hotelOcc != null) {
       const dir = adjustment.direction === "hotter" ? "iznad proseka hotela" : "ispod proseka hotela";
-      parts.push(`Popunjenost ${typeOcc}% vs ${hotelOcc}% hotel — ${dir}`);
+      // "(ovaj datum)" once, covering both sides — this line is entirely about the selected stay
+      // date, unlike the base card's "(mesečno)" occupancy figure above it.
+      parts.push(`Popunjenost ${typeOcc}% vs ${hotelOcc}% hotel (ovaj datum) — ${dir}`);
     }
   }
   if (laddered) parts.push("cena ograničena da ne naruši poredak cena");
@@ -436,8 +439,12 @@ export default function PreporukaPage() {
   // this month's on-books pace (rooms on the books for the whole month vs. target) instead.
   const dailyOccPct = snapshot && snapshot.popunjenost !== 0 ? snapshot.popunjenost : null;
   const monthlyOccPct = monthlyPace ? monthlyPace.occupancyOnbooks : null;
-  const onBooksOccPctIsMonthly = dailyOccPct === null && monthlyOccPct !== null;
   const onBooksOccPct = dailyOccPct ?? monthlyOccPct;
+  // BOTH sources above are whole-month figures as of the latest report — daily_reports.on_books_today
+  // is a running month-to-date total, not a per-stay-date reading, and the "monthly pace" fallback is
+  // explicitly month-level too. So this is true whenever a value is available at all, not only on the
+  // fallback path — see RecommendationInputs for why that distinction used to be (silently) wrong.
+  const onBooksOccPctIsMonthly = onBooksOccPct !== null;
 
   const onBooksNights = snapshot ? snapshot.brojNocenja : null;
   // Same-day-last-year of 0 means "not entered" — same convention used everywhere else in the app
@@ -448,11 +455,12 @@ export default function PreporukaPage() {
   const isWeekend = isWeekendDate(selectedDate);
   const hasNearbyEvent = events.length > 0;
   const nearbyEventLabel = events[0] ? truncate(events[0].title, 40) : null;
+  const monthLabel = MONTHS_SR[dateParts(selectedDate).month - 1].toLowerCase();
 
   const inputs: RecommendationInputs = useMemo(() => ({
     onBooksOccPct, onBooksOccPctIsMonthly, targetOccPct, onBooksNights, sameDayLastYearNights,
-    competitorAvgEur, ourRefPriceEur, isWeekend, hasNearbyEvent, nearbyEventLabel,
-  }), [onBooksOccPct, onBooksOccPctIsMonthly, targetOccPct, onBooksNights, sameDayLastYearNights, competitorAvgEur, ourRefPriceEur, isWeekend, hasNearbyEvent, nearbyEventLabel]);
+    competitorAvgEur, ourRefPriceEur, isWeekend, hasNearbyEvent, nearbyEventLabel, monthLabel,
+  }), [onBooksOccPct, onBooksOccPctIsMonthly, targetOccPct, onBooksNights, sameDayLastYearNights, competitorAvgEur, ourRefPriceEur, isWeekend, hasNearbyEvent, nearbyEventLabel, monthLabel]);
 
   const recommendation = useMemo(() => computeRecommendation(inputs), [inputs]);
 
@@ -468,17 +476,24 @@ export default function PreporukaPage() {
       const adjustment = computeRoomTypeAdjustment(matchedRow, hotelOccForDate.occPct, hotelPickupPerDay, recommendation.verdict);
       const typeNudgePercent = resolveTypeNudgePercent(recommendation.verdict, recommendation.nudgePercent, adjustment.verdict);
       const rawSuggested = suggestedPrice(current, typeNudgePercent, adjustment.verdict);
-      return { ...def, current, adjustment, rawSuggested };
+      return { ...def, current, adjustment, rawSuggested, typeNudgePercent, roomsInventory: matchedRow?.roomsInventory ?? null };
     });
 
     const ladderInputs: LadderInput[] = withAdjustment.map(r => ({
       roomTypeKey: r.key, baselinePrice: r.current, suggestedPrice: r.rawSuggested,
     }));
     const ladderByKey = new Map(enforcePriceLadder(ladderInputs).map(r => [r.roomTypeKey, r]));
+    const labelByKey = new Map(ROOM_TYPE_DEFS.map(d => [d.key, d.label]));
 
     return withAdjustment.map(r => {
       const ladder = ladderByKey.get(r.key);
-      return { ...r, suggested: ladder?.finalPrice ?? r.rawSuggested, laddered: ladder?.clamped ?? false };
+      const clampedAgainstKey = ladder?.clampedAgainstKey ?? null;
+      const clampedAgainstLabel = clampedAgainstKey != null ? labelByKey.get(clampedAgainstKey as RoomTypeKey) ?? clampedAgainstKey : null;
+      const clampedAgainstPrice = clampedAgainstKey != null ? ladderByKey.get(clampedAgainstKey)?.finalPrice ?? null : null;
+      return {
+        ...r, suggested: ladder?.finalPrice ?? r.rawSuggested, laddered: ladder?.clamped ?? false,
+        clampedAgainstLabel, clampedAgainstPrice,
+      };
     });
   }, [hotel, roomTypeRows, hotelOccForDate.occPct, hotelPickupPerDay, recommendation.verdict, recommendation.nudgePercent]);
 
@@ -492,6 +507,20 @@ export default function PreporukaPage() {
       setAcceptingKey(null);
     }
   }, [selectedHotel, acceptingKey, updateRoomPrices]);
+
+  // "Zašto?" — collapsed by default so the card stays scannable; the explanation text is derived
+  // straight from `recommendation`/`suggestions` (see recommendationExplain.ts), never a second,
+  // parallel computation that could drift from the actual verdict.
+  const [baseExplainOpen, setBaseExplainOpen] = useState(false);
+  const [expandedTypes, setExpandedTypes] = useState<Set<RoomTypeKey>>(new Set());
+  const toggleTypeExplain = useCallback((key: RoomTypeKey) => {
+    setExpandedTypes(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  }, []);
+  const baseExplanation = useMemo(() => explainBaseRecommendation(inputs, recommendation), [inputs, recommendation]);
 
   const style = VERDICT_STYLES[recommendation.verdict];
   const VerdictIcon = style.icon;
@@ -680,6 +709,16 @@ export default function PreporukaPage() {
           ))}
         </div>
 
+        {/* Always visible (not behind "Zašto?") — the base/per-type scope gap is the single most
+            confusing thing about this card, so it can't be one click away from invisible. Framed as
+            a current limitation ("trenutno"), not a permanent design choice. */}
+        <div className="flex items-start gap-1.5 mb-2" style={{ fontSize: 11, color: "#9ca3af" }}>
+          <AlertCircle size={12} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>
+            Napomena: osnovna preporuka trenutno koristi mesečni prosek (ista za ceo mesec) — preporuke po tipu sobe ispod su specifične za odabrani datum.
+          </span>
+        </div>
+
         {/* Transparency note about missing signals */}
         {recommendation.missingSignals.length > 0 && (
           <div className="flex items-start gap-1.5 mt-2" style={{ fontSize: 11, color: "#9ca3af" }}>
@@ -690,6 +729,52 @@ export default function PreporukaPage() {
             </span>
           </div>
         )}
+
+        {/* "Zašto?" — full plain-language breakdown of the base verdict, collapsed by default */}
+        <button
+          onClick={() => setBaseExplainOpen(o => !o)}
+          style={{
+            marginTop: 8, height: 24, padding: "0 10px", borderRadius: 6,
+            border: `1px solid ${style.border}`, background: "#ffffff",
+            color: style.color, fontSize: 11, fontWeight: 600, cursor: "pointer",
+          }}
+        >
+          {baseExplainOpen ? "Sakrij objašnjenje ▲" : "Zašto? ▾"}
+        </button>
+        {baseExplainOpen && (
+          <div
+            className="flex flex-col gap-3 mt-3"
+            style={{ padding: "14px 16px", background: "#ffffff", border: "1px solid #e5e7eb", borderRadius: 10, fontSize: 12.5, color: "#374151" }}
+          >
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                Signali
+              </div>
+              <div className="flex flex-col gap-1.5">
+                {baseExplanation.signalLines.map((line, i) => <div key={i}>{line}</div>)}
+              </div>
+            </div>
+            {baseExplanation.missingLines.length > 0 && (
+              <div>
+                <div style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                  Nedostaje
+                </div>
+                <div className="flex flex-col gap-1.5" style={{ color: "#b45309" }}>
+                  {baseExplanation.missingLines.map((line, i) => <div key={i}>{line}</div>)}
+                </div>
+              </div>
+            )}
+            <div>
+              <div style={{ fontSize: 10, fontWeight: 700, color: "#9ca3af", textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 4 }}>
+                Zaključak
+              </div>
+              <div className="flex flex-col gap-1.5" style={{ fontWeight: 500 }}>
+                {baseExplanation.verdictLines.map((line, i) => <div key={i}>{line}</div>)}
+              </div>
+            </div>
+          </div>
+        )}
+
         {!competitorChecked ? (
           <div style={{ fontSize: 11, color: "#9ca3af", marginTop: 4 }}>
             {competitorLoading ? "Proveravam cene konkurencije…" : "Čekam datum i hotel da proverim konkurenciju."}
@@ -778,8 +863,16 @@ export default function PreporukaPage() {
               const typeStyle = VERDICT_STYLES[row.adjustment.verdict];
               const deviatesFromBase = row.adjustment.verdict !== recommendation.verdict;
               const reasonText = roomTypeReasonText(row.adjustment, hotelOccForDate.occPct, row.laddered);
+              const typeExpanded = expandedTypes.has(row.key);
+              const typeExplainLines = typeExpanded ? explainRoomTypeAdjustment({
+                label: row.label, adjustment: row.adjustment, hotelOccPct: hotelOccForDate.occPct,
+                roomsInventory: row.roomsInventory, baseVerdict: recommendation.verdict,
+                typeNudgePercent: row.typeNudgePercent, suggested: row.suggested, laddered: row.laddered,
+                clampedAgainstLabel: row.clampedAgainstLabel, clampedAgainstPrice: row.clampedAgainstPrice,
+              }) : [];
               return (
-                <tr key={row.key} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                <Fragment key={row.key}>
+                <tr style={{ borderBottom: typeExpanded ? "none" : "1px solid #f3f4f6" }}>
                   <td style={{ padding: "12px 20px", fontSize: 13, fontWeight: 600, color: "#374151" }}>
                     <div className="flex items-center gap-2">
                       <span>{row.label}</span>
@@ -794,6 +887,15 @@ export default function PreporukaPage() {
                           {verdictLabel(row.adjustment.verdict)}
                         </span>
                       )}
+                      <button
+                        onClick={() => toggleTypeExplain(row.key)}
+                        style={{
+                          fontSize: 10, fontWeight: 600, color: "#9ca3af",
+                          background: "none", border: "none", cursor: "pointer", padding: 0,
+                        }}
+                      >
+                        {typeExpanded ? "Sakrij ▲" : "Zašto? ▾"}
+                      </button>
                     </div>
                     {reasonText && (
                       <div style={{ fontSize: 10.5, fontWeight: 400, color: row.laddered ? "#b45309" : "#9ca3af", marginTop: 2 }}>
@@ -840,6 +942,19 @@ export default function PreporukaPage() {
                     )}
                   </td>
                 </tr>
+                {typeExpanded && (
+                  <tr style={{ borderBottom: "1px solid #f3f4f6" }}>
+                    <td colSpan={4} style={{ padding: "0 20px 14px 20px" }}>
+                      <div
+                        className="flex flex-col gap-1.5"
+                        style={{ padding: "12px 14px", background: "#f9fafb", border: "1px solid #e5e7eb", borderRadius: 8, fontSize: 12, color: "#374151" }}
+                      >
+                        {typeExplainLines.map((line, i) => <div key={i}>{line}</div>)}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               );
             })}
           </tbody>

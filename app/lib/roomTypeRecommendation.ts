@@ -231,6 +231,10 @@ export interface LadderResult {
   roomTypeKey: string;
   finalPrice: number | null;
   clamped: boolean;
+  // The type whose (already-processed) price set the floor that clamped this one — null unless
+  // clamped is true. Lets the UI name exactly what a clamp was clamped against, straight from the
+  // same pass that computed the clamp, rather than re-deriving it separately.
+  clampedAgainstKey: string | null;
 }
 
 // Enforces the SAME relative price ordering the hotel's own configured baseline prices already
@@ -246,22 +250,26 @@ export function enforcePriceLadder(inputs: LadderInput[]): LadderResult[] {
 
   const results: LadderResult[] = [];
   let floor: number | null = null;
+  let floorKey: string | null = null;
   for (const item of sorted) {
     if (item.suggestedPrice === null) {
-      results.push({ roomTypeKey: item.roomTypeKey, finalPrice: null, clamped: false });
+      results.push({ roomTypeKey: item.roomTypeKey, finalPrice: null, clamped: false, clampedAgainstKey: null });
       continue;
     }
     let final = item.suggestedPrice;
     let clamped = false;
+    let clampedAgainstKey: string | null = null;
     if (floor !== null && final < floor) {
       final = floor;
       clamped = true;
+      clampedAgainstKey = floorKey;
     }
-    results.push({ roomTypeKey: item.roomTypeKey, finalPrice: final, clamped });
+    results.push({ roomTypeKey: item.roomTypeKey, finalPrice: final, clamped, clampedAgainstKey });
     floor = final;
+    floorKey = item.roomTypeKey;
   }
   for (const item of withoutBaseline) {
-    results.push({ roomTypeKey: item.roomTypeKey, finalPrice: item.suggestedPrice, clamped: false });
+    results.push({ roomTypeKey: item.roomTypeKey, finalPrice: item.suggestedPrice, clamped: false, clampedAgainstKey: null });
   }
   return results;
 }

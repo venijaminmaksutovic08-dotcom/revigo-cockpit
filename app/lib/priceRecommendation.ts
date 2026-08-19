@@ -31,19 +31,26 @@ export type ConfidenceLabel = "visoka" | "srednja" | "niska";
 
 export interface RecommendationInputs {
   onBooksOccPct: number | null;          // current on-books occupancy %, e.g. 68
-  // True when onBooksOccPct came from that month's on-books pace (rooms on the books for the
-  // whole month vs. the monthly target) rather than a specific day's own pace — a future date has
-  // no per-day pace yet, so the reason chip must say so honestly ("(mesečno)") rather than imply
-  // this is that exact day's number.
+  // Both current sources of onBooksOccPct (the latest daily_reports snapshot and the monthly
+  // on-books pace fallback) are whole-month figures as of the latest report — neither is scoped to
+  // an individual stay date. This is therefore true whenever onBooksOccPct is available at all, so
+  // every label built from it says so honestly ("(mesečno)") rather than imply it's that one
+  // night's number. Kept as an explicit flag (not inlined as `!= null`) so the day this engine
+  // gains a genuinely per-date occupancy source, only this one assignment needs to change.
   onBooksOccPctIsMonthly: boolean;
   targetOccPct: number | null;           // monthly target occupancy %, e.g. 55
-  onBooksNights: number | null;          // current on-books room-nights for the period
-  sameDayLastYearNights: number | null;  // same-day-last-year room-nights
-  competitorAvgEur: number | null;       // average competitor price in EUR
+  onBooksNights: number | null;          // current on-books room-nights — also a whole-month total
+  sameDayLastYearNights: number | null;  // same-day-last-year room-nights — also a whole-month total
+  competitorAvgEur: number | null;       // average competitor price in EUR — genuinely per stay date
   ourRefPriceEur: number | null;         // our CLS price — the reference for competitorGap
   isWeekend: boolean;
   hasNearbyEvent: boolean;
   nearbyEventLabel: string | null;       // short label of the event, if any, for the reason chip
+  // Selected stay date's month, in the app's existing lowercase Serbian form (e.g. "avgust") — used
+  // only to label the monthly target/pace figures honestly ("plan za avgust"), never in any
+  // computation. Callers derive this from the same selected date already driving everything else
+  // here; this module never parses a date itself.
+  monthLabel: string;
 }
 
 export type ComponentKey = "paceVsTarget" | "competitorGap" | "paceVsLastYear" | "eventsBoost";
@@ -178,7 +185,7 @@ export function buildReasonChips(
     && inputs.onBooksOccPct != null && inputs.targetOccPct != null) {
     const label = inputs.onBooksOccPctIsMonthly ? "Popunjenost (mesečno)" : "Popunjenost";
     chips.push({
-      text: `${label} ${Math.round(inputs.onBooksOccPct)}% vs ${Math.round(inputs.targetOccPct)}% plan`,
+      text: `${label} ${Math.round(inputs.onBooksOccPct)}% vs ${Math.round(inputs.targetOccPct)}% plan za ${inputs.monthLabel}`,
       tone: parts.paceVsTarget > 0 ? "positive" : "negative",
     });
   }
@@ -195,7 +202,7 @@ export function buildReasonChips(
   if (parts.paceVsLastYear !== null && Math.abs(parts.paceVsLastYear) >= deadband
     && inputs.onBooksNights != null && inputs.sameDayLastYearNights != null) {
     chips.push({
-      text: `Noćenja ${Math.round(inputs.onBooksNights)} vs ${Math.round(inputs.sameDayLastYearNights)} lane (isti dan)`,
+      text: `Noćenja (mesečno) ${Math.round(inputs.onBooksNights)} vs ${Math.round(inputs.sameDayLastYearNights)} lane (isti dan)`,
       tone: parts.paceVsLastYear > 0 ? "positive" : "negative",
     });
   }
@@ -220,7 +227,7 @@ export function buildReasonChips(
 const SIGNAL_LABELS: Record<Exclude<ComponentKey, "eventsBoost">, string> = {
   paceVsTarget: "Popunjenost vs plan",
   competitorGap: "Konkurencija",
-  paceVsLastYear: "Prošla godina",
+  paceVsLastYear: "Prošla godina (mesečno)", // onBooksNights/sameDayLastYearNights are always whole-month totals — see RecommendationInputs
 };
 
 export function computeRecommendation(inputs: RecommendationInputs): RecommendationResult {
